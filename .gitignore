@@ -1,0 +1,29 @@
+# Secrets / local env
+.env
+.env.local
+
+# Model artifacts — large, regenerated via aihub_compile.py (see models/README.md)
+models/*.onnx
+models/*.dlc
+models/*.tflite
+models/*.bin
+models/*.npy
+
+# Board flash images / provisioning blobs
+image/
+*.img
+*.img.xz
+
+# Visual QA output
+tools/_shots/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
