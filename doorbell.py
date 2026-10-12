@@ -243,7 +243,11 @@ class NpuFaceEngine(threading.Thread):
     vs CPU engine: ~95% (ORT spreads work across all 8 cores).
     """
     MAX_BATCH     = 16
-    BATCH_TIMEOUT = 0.35    # seconds — collect frames for up to this long, then run
+    BATCH_TIMEOUT = 0.10    # seconds — collect frames for up to this long, then run.
+                            # Kept short on purpose: this wait is the dominant source of
+                            # overlay lag (the box/dots trailing the moving face). Smaller
+                            # batches cost a little throughput (each ~280ms qnn-net-run spawn
+                            # processes fewer frames) but the overlay tracks far more tightly.
 
     def __init__(self, on_ready):
         super().__init__(daemon=True)
@@ -500,7 +504,14 @@ class QRDetector:
         """Return a registration name if a known QR is found, else None."""
         if time.time() < self._cooldown_until:
             return None
-        data, pts, _ = self._detector.detectAndDecode(frame)
+        try:
+            data, pts, _ = self._detector.detectAndDecode(frame)
+        except cv2.error:
+            # OpenCV 5.0's QR decoder can throw on degenerate candidate
+            # contours (zero-area src points) for certain camera frames.
+            # It's a transient per-frame failure — never let it kill the
+            # unattended demo; just skip QR detection for this frame.
+            return None
         if not data:
             return None
         m = QR_URL_PATTERN.search(data)
@@ -588,14 +599,32 @@ class CameraThread(threading.Thread):
         self._frame: Optional[np.ndarray] = None
         self._lock = threading.Lock()
         self.running = True
-        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-        if not self.cap.isOpened():
+        self.cap = self._open_camera()
+        if self.cap is None or not self.cap.isOpened():
             print("[Camera] No camera — using synthetic frames")
+
+    @staticmethod
+    def _open_camera():
+        """
+        Open the first V4L2 index that both opens and yields a real frame.
+        A USB webcam can re-enumerate across reboots/replugs (e.g. video0 ->
+        video1), so we probe a few indices instead of hardcoding 0 — otherwise
+        a moved camera leaves the app on synthetic frames or a stale handle.
+        """
+        for idx in range(6):
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if cap.isOpened():
+                ok, _ = cap.read()
+                if ok:
+                    print(f"[Camera] Opened /dev/video{idx}")
+                    return cap
+            cap.release()
+        return None
 
     def run(self):
         t = 0.0
         while self.running:
-            if self.cap.isOpened():
+            if self.cap is not None and self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if ret:
                     with self._lock:
@@ -619,7 +648,7 @@ class CameraThread(threading.Thread):
 
     def stop(self):
         self.running = False
-        if self.cap.isOpened():
+        if self.cap is not None and self.cap.isOpened():
             self.cap.release()
 
 
@@ -664,7 +693,22 @@ class RegistrationDriver(threading.Thread):
 
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
-W, H = 1280, 720
+# Native panel resolution. The demo HDMI panel is 1920x1080, so we author and
+# render the canvas at that size — drawing every Hershey glyph and vector stroke
+# directly into the panel's pixel grid instead of drawing at 720p and letting the
+# fullscreen window interpolate it up 1.5x (which is what made text/logo soft).
+W, H = 1920, 1080
+S = H / 720.0            # UI scale vs. the original 720p authoring (= 1.5)
+
+
+def _s(v) -> int:
+    """Scale a 720p-authored pixel size/offset to the native canvas."""
+    return int(round(v * S))
+
+
+def _th(v) -> int:
+    """Scale a stroke thickness, never below 1px."""
+    return max(1, int(round(v * S)))
 
 # ── Dragonwing theme ────────────────────────────────────────────────────────
 # Palette sampled from the Dragonwing brand references (assets/1.png–3.png).
@@ -697,46 +741,81 @@ FONT_MONO = cv2.FONT_HERSHEY_PLAIN
 # logo.jpeg and recolored light-on-transparent so it reads on the indigo bar.
 # Embedded as base64 so the single-file scp-to-board deploy needs no assets dir.
 _DRAGON_MARK_PNG_B64 = (
-    "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"
+    "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"
+    "RU5ErkJggg=="
 )
 _DRAGON_MARK: Optional[np.ndarray] = None
 
@@ -809,20 +888,20 @@ def draw_wave_field(canvas: np.ndarray, t: float, intensity: float = 1.0):
     """
     cx, cy = int(W * 0.80), int(H * 0.42)   # off-centre focus, like the reference
     n_lines = 22
+    step = _s(40)
     for i in range(n_lines):
         spread = 0.6 + i * 0.12                     # each line fans out further
         phase = t * 0.25 + i * 0.14
         pts = []
-        for s in range(0, W + 40, 40):
-            x = s
+        for x in range(0, W + step, step):
             # curve that bows toward the focus and drifts with phase
             dx = (x - cx) / W
-            y = cy + int(np.sin(dx * 3.1 + phase) * (120 + 60 * spread) * spread * 0.5)
+            y = cy + int(np.sin(dx * 3.1 + phase) * (120 + 60 * spread) * spread * 0.5 * S)
             pts.append((x, y))
         shade = 0.20 + 0.5 * (i / n_lines)
         col = tuple(int(INDIGO[c] + (VIOLET_LO[c] - INDIGO[c]) * shade * intensity)
                     for c in range(3))
-        cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, col, 1, cv2.LINE_AA)
+        cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, col, _th(1), cv2.LINE_AA)
 
 
 def _rot(px, py, cx, cy, ang):
@@ -874,13 +953,21 @@ def draw_dragon_mark(canvas: np.ndarray, cx: int, cy: int, r: int,
 
 
 def put_centered(img, text, cy, scale, color, thickness=1):
+    """Centered text. `scale`/`thickness` are in logical 720p units (×S here);
+    `cy` is a native-canvas coordinate."""
+    scale *= S
+    thickness = _th(thickness)
     (tw, _), _ = cv2.getTextSize(text, FONT, scale, thickness)
     x = (img.shape[1] - tw) // 2
     cv2.putText(img, text, (x, cy), FONT, scale, color, thickness, cv2.LINE_AA)
 
 
 def put_tracked(img, text, cx, cy, scale, color, thickness, spacing):
-    """Centered text with manual letter-spacing — used for the DRAGONWING wordmark."""
+    """Centered text with manual letter-spacing — used for the DRAGONWING wordmark.
+    `scale`/`thickness` are logical 720p units (×S here); `cx`/`cy`/`spacing`
+    are native-canvas pixels."""
+    scale *= S
+    thickness = _th(thickness)
     sizes = [cv2.getTextSize(ch, FONT, scale, thickness)[0][0] for ch in text]
     total = sum(sizes) + spacing * (len(text) - 1)
     x = cx - total // 2
@@ -891,9 +978,9 @@ def put_tracked(img, text, cx, cy, scale, color, thickness, spacing):
 
 def draw_wordmark(canvas: np.ndarray, cx: int, cy: int, scale: float = 1.0):
     """DRAGONWING tracked wordmark + DOORBELL subtitle lockup."""
-    put_tracked(canvas, "DRAGONWING", cx, cy, 0.95 * scale, INK, 2, int(10 * scale))
-    put_tracked(canvas, "D O O R B E L L", cx, cy + int(34 * scale),
-                0.5 * scale, VIOLET_HI, 1, int(2 * scale))
+    put_tracked(canvas, "DRAGONWING", cx, cy, 0.95 * scale, INK, 2, _s(10 * scale))
+    put_tracked(canvas, "D O O R B E L L", cx, cy + _s(34 * scale),
+                0.5 * scale, VIOLET_HI, 1, _s(2 * scale))
 
 
 def legibility_halo(canvas: np.ndarray, cx: int, cy: int, w: int, h: int,
@@ -933,20 +1020,20 @@ def draw_access_banner(canvas: np.ndarray, text: str, color: tuple, t: float):
     The type pulses subtly on appearance.
     """
     # Low band, clear of the face: sits in the lower third, above the status bar.
-    band_h = 104
-    y1 = H - 96
+    band_h = _s(104)
+    y1 = H - _s(96)
     y0 = y1 - band_h
 
     # Flat Deep-Indigo block, full width, square corners.
     canvas[y0:y1, 0:W] = INDIGO_DEEP
     # Thin signal-color rules top and bottom seat the block without softening it.
-    cv2.line(canvas, (0, y0), (W, y0), color, 3, cv2.LINE_AA)
-    cv2.line(canvas, (0, y1), (W, y1), color, 3, cv2.LINE_AA)
+    cv2.line(canvas, (0, y0), (W, y0), color, _th(3), cv2.LINE_AA)
+    cv2.line(canvas, (0, y1), (W, y1), color, _th(3), cv2.LINE_AA)
 
     # Display-scale verdict, subtly pulsing on appearance.
     pulse = 1.0 - 0.5 * np.exp(-t * 5.0) * abs(np.sin(t * 9.0))
-    scale = 1.7 * pulse
-    thickness = 4
+    scale = 1.7 * pulse * S
+    thickness = _th(4)
     (tw, th), _ = cv2.getTextSize(text, FONT, scale, thickness)
     tx = (W - tw) // 2
     ty = y0 + (band_h + th) // 2
@@ -966,38 +1053,38 @@ def draw_face_overlays(canvas: np.ndarray, faces: list, color: tuple,
         cv2.rectangle(canvas,
                       (int(x1 * sx + ox), int(y1 * sy + oy)),
                       (int(x2 * sx + ox), int(y2 * sy + oy)),
-                      color, 2)
+                      color, _th(2))
         if face.kps is not None:
             for x, y in face.kps:
-                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), 4, color, -1)
+                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), _s(4), color, -1)
         # confidence score
         score = getattr(face, 'det_score', None)
         if score is not None:
             cv2.putText(canvas, f"{score:.2f}",
-                        (int(x1 * sx + ox), int(y1 * sy + oy) - 6),
-                        FONT, 0.45, color, 1, cv2.LINE_AA)
+                        (int(x1 * sx + ox), int(y1 * sy + oy) - _s(6)),
+                        FONT, 0.45 * S, color, _th(1), cv2.LINE_AA)
 
 
 def draw_loading(canvas: np.ndarray, t: float):
     brand_gradient(canvas)
     draw_wave_field(canvas, t, intensity=0.7)
-    cx, cy = W // 2, H // 2 - 40
+    cx, cy = W // 2, H // 2 - _s(40)
     pulse = 0.5 + 0.5 * np.sin(t * 2.2)
-    draw_dragon_mark(canvas, cx, cy, 86, VIOLET, glow=True)
+    draw_dragon_mark(canvas, cx, cy, _s(86), VIOLET, glow=True)
 
     # Orbiting progress arc around the mark
     ang = (t * 2.0) % (2 * np.pi)
     deg = int(np.degrees(ang))
-    cv2.ellipse(canvas, (cx, cy), (120, 120), 0, deg, deg + 90,
-                VIOLET_HI, 3, cv2.LINE_AA)
-    cv2.circle(canvas, (cx, cy), 120, VIOLET_LO, 1, cv2.LINE_AA)
+    cv2.ellipse(canvas, (cx, cy), (_s(120), _s(120)), 0, deg, deg + 90,
+                VIOLET_HI, _th(3), cv2.LINE_AA)
+    cv2.circle(canvas, (cx, cy), _s(120), VIOLET_LO, _th(1), cv2.LINE_AA)
 
     dots = "." * (int(t * 2) % 4)
     glow_c = tuple(int(MIST[c] + (VIOLET_HI[c] - MIST[c]) * pulse) for c in range(3))
-    legibility_halo(canvas, cx, cy + 215, 440, 170, strength=0.6)
-    draw_wordmark(canvas, cx, cy + 180, 1.1)
-    put_centered(canvas, f"Initializing neural engines{dots}", cy + 250, 0.6, glow_c, 1)
-    put_centered(canvas, "InsightFace buffalo_sc    HTP v75", cy + 282, 0.46, VIOLET_LO, 1)
+    legibility_halo(canvas, cx, cy + _s(215), _s(440), _s(170), strength=0.6)
+    draw_wordmark(canvas, cx, cy + _s(180), 1.1)
+    put_centered(canvas, f"Initializing neural engines{dots}", cy + _s(250), 0.6, glow_c, 1)
+    put_centered(canvas, "InsightFace buffalo_sc    HTP v75", cy + _s(282), 0.46, VIOLET_LO, 1)
 
 
 def draw_standby(canvas: np.ndarray, t: float, db_count: int):
@@ -1005,35 +1092,35 @@ def draw_standby(canvas: np.ndarray, t: float, db_count: int):
     draw_wave_field(canvas, t, intensity=1.0)
 
     # Large dragon-mark watermark anchored off-centre, echoing the reference art.
-    draw_dragon_mark(canvas, int(W * 0.5), int(H * 0.44), 150, INDIGO_LIFT)
+    draw_dragon_mark(canvas, int(W * 0.5), int(H * 0.44), _s(150), INDIGO_LIFT)
 
     cx, cy = W // 2, H // 2
     pulse = 0.5 + 0.5 * np.sin(t * 2.4)
 
     # Pulsing violet ring enclosing a lock glyph
-    r_outer = int(104 + 14 * pulse)
+    r_outer = _s(104 + 14 * pulse)
     ring_c = tuple(int(VIOLET_LO[c] + (VIOLET[c] - VIOLET_LO[c]) * pulse) for c in range(3))
-    cv2.circle(canvas, (cx, cy), r_outer, ring_c, 2, cv2.LINE_AA)
-    cv2.circle(canvas, (cx, cy), r_outer - 16, VIOLET_LO, 1, cv2.LINE_AA)
+    cv2.circle(canvas, (cx, cy), r_outer, ring_c, _th(2), cv2.LINE_AA)
+    cv2.circle(canvas, (cx, cy), r_outer - _s(16), VIOLET_LO, _th(1), cv2.LINE_AA)
 
     # Padlock glyph, violet body on indigo
-    lw, lh = 46, 36
-    lx, ly = cx - lw // 2, cy - lh // 2 + 8
+    lw, lh = _s(46), _s(36)
+    lx, ly = cx - lw // 2, cy - lh // 2 + _s(8)
     cv2.rectangle(canvas, (lx, ly), (lx + lw, ly + lh), VIOLET, -1, cv2.LINE_AA)
-    cv2.rectangle(canvas, (lx, ly), (lx + lw, ly + lh), VIOLET_HI, 1, cv2.LINE_AA)
+    cv2.rectangle(canvas, (lx, ly), (lx + lw, ly + lh), VIOLET_HI, _th(1), cv2.LINE_AA)
     shackle_c = tuple(int(VIOLET[c] + (VIOLET_HI[c] - VIOLET[c]) * pulse) for c in range(3))
-    cv2.ellipse(canvas, (cx, ly), (lw // 3, lh // 2), 0, 180, 360, shackle_c, 4, cv2.LINE_AA)
-    cv2.circle(canvas, (cx, ly + lh // 2 - 2), 5, INDIGO_DEEP, -1, cv2.LINE_AA)
+    cv2.ellipse(canvas, (cx, ly), (lw // 3, lh // 2), 0, 180, 360, shackle_c, _th(4), cv2.LINE_AA)
+    cv2.circle(canvas, (cx, ly + lh // 2 - _s(2)), _s(5), INDIGO_DEEP, -1, cv2.LINE_AA)
 
-    legibility_halo(canvas, cx, cy + 142, 430, 110, strength=0.62)
-    put_centered(canvas, "DOORBELL READY", cy + 128, 0.95, INK, 2)
-    put_centered(canvas, "Awaiting visitor", cy + 162, 0.56, MIST, 1)
+    legibility_halo(canvas, cx, cy + _s(142), _s(430), _s(110), strength=0.62)
+    put_centered(canvas, "DOORBELL READY", cy + _s(128), 0.95, INK, 2)
+    put_centered(canvas, "Awaiting visitor", cy + _s(162), 0.56, MIST, 1)
 
     # DB badge, top-right — sits below the HUD bar to avoid the FPS badge
     badge = f"{db_count} enrolled" if db_count else "no faces enrolled"
-    (tw, _), _ = cv2.getTextSize(badge, FONT, 0.5, 1)
-    cv2.circle(canvas, (W - tw - 30, 50), 4, UNLOCK if db_count else VIOLET_LO, -1, cv2.LINE_AA)
-    cv2.putText(canvas, badge, (W - tw - 18, 55), FONT, 0.5, MIST, 1, cv2.LINE_AA)
+    (tw, _), _ = cv2.getTextSize(badge, FONT, 0.5 * S, 1)
+    cv2.circle(canvas, (W - tw - _s(30), _s(50)), _s(4), UNLOCK if db_count else VIOLET_LO, -1, cv2.LINE_AA)
+    cv2.putText(canvas, badge, (W - tw - _s(18), _s(55)), FONT, 0.5 * S, MIST, _th(1), cv2.LINE_AA)
 
 
 def composite_frame(canvas: np.ndarray, frame: np.ndarray):
@@ -1064,91 +1151,98 @@ def draw_camera_state(canvas: np.ndarray, frame: np.ndarray, faces: list,
 
     # Corner brackets in the state color (violet when neutral, green/red/amber per state)
     fx2, fy2 = ox + int(fw * scale), oy + int(fh * scale)
-    bl = 54
+    bl = _s(54)
+    bt = _th(3)
     for bx, by, sx2, sy2 in [(ox, oy, 1, 1), (fx2, oy, -1, 1),
                              (ox, fy2, 1, -1), (fx2, fy2, -1, -1)]:
-        cv2.line(canvas, (bx, by), (bx + sx2 * bl, by), border, 3, cv2.LINE_AA)
-        cv2.line(canvas, (bx, by), (bx, by + sy2 * bl), border, 3, cv2.LINE_AA)
+        cv2.line(canvas, (bx, by), (bx + sx2 * bl, by), border, bt, cv2.LINE_AA)
+        cv2.line(canvas, (bx, by), (bx, by + sy2 * bl), border, bt, cv2.LINE_AA)
 
-    # Bottom status bar — indigo wash + small dragon lockup + state label
-    panel_y = H - 84
+    # Bottom status bar — indigo wash + logo lockup + state label. Seated above
+    # the bottom hint strip so the logo and verdict never sit under the controls.
+    bar_h = _s(84)
+    panel_y = H - _s(22) - bar_h          # clear of the hint bar (H - 22 tall)
     overlay = canvas.copy()
-    cv2.rectangle(overlay, (0, panel_y), (W, H), INDIGO_DEEP, -1)
+    cv2.rectangle(overlay, (0, panel_y), (W, H - _s(22)), INDIGO_DEEP, -1)
     cv2.addWeighted(overlay, 0.82, canvas, 0.18, 0, canvas)
-    cv2.line(canvas, (0, panel_y), (W, panel_y), VIOLET_LO, 1, cv2.LINE_AA)
-    draw_logo_mark(canvas, 54, panel_y + 42, 56)
+    cv2.line(canvas, (0, panel_y), (W, panel_y), VIOLET_LO, _th(1), cv2.LINE_AA)
+    draw_logo_mark(canvas, _s(54), panel_y + bar_h // 2, _s(56))
 
     # Status dot + label, left-aligned after the mark — the sole verdict now.
-    cv2.circle(canvas, (108, panel_y + 42), 7, label_color, -1, cv2.LINE_AA)
-    cv2.putText(canvas, label.strip(), (126, panel_y + 51),
-                FONT, 1.0, label_color, 2, cv2.LINE_AA)
+    cv2.circle(canvas, (_s(108), panel_y + bar_h // 2), _s(7), label_color, -1, cv2.LINE_AA)
+    cv2.putText(canvas, label.strip(), (_s(126), panel_y + bar_h // 2 + _s(9)),
+                FONT, 1.0 * S, label_color, _th(2), cv2.LINE_AA)
 
     if reg_progress:
         n, total = reg_progress
-        bar_w = int(W * 0.5)
-        bar_x = W - bar_w - 40
-        bar_y = panel_y + 36
-        cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + bar_w, bar_y + 12),
+        count_txt = f"{n}/{total}"
+        (ctw, _), _ = cv2.getTextSize(count_txt, FONT, 0.5 * S, _th(1))
+        right_pad = _s(30) + ctw          # room for the count after the bar
+        bar_x = _s(620)
+        bar_w = W - bar_x - right_pad
+        bar_y = panel_y + bar_h // 2 - _s(6)
+        bh = _s(12)
+        cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + bar_w, bar_y + bh),
                       INDIGO_LIFT, -1, cv2.LINE_AA)
-        cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + bar_w, bar_y + 12),
-                      VIOLET_LO, 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + bar_w, bar_y + bh),
+                      VIOLET_LO, _th(1), cv2.LINE_AA)
         fill = int(bar_w * n / total) if total else 0
         if fill > 0:
-            cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + fill, bar_y + 12),
+            cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + fill, bar_y + bh),
                           VIOLET, -1, cv2.LINE_AA)
-        cv2.putText(canvas, f"{n}/{total}", (bar_x + bar_w + 10, bar_y + 11),
-                    FONT, 0.5, MIST, 1, cv2.LINE_AA)
+        cv2.putText(canvas, count_txt, (bar_x + bar_w + _s(10), bar_y + bh),
+                    FONT, 0.5 * S, MIST, _th(1), cv2.LINE_AA)
 
 
 def draw_qr_authorized(canvas: np.ndarray, elapsed: float, name: str):
     """Phase 1 (0-5s): QR accepted — violet burst + dragon mark + AUTHORIZED."""
     brand_gradient(canvas)
     draw_wave_field(canvas, elapsed, intensity=0.6)
-    cx, cy = W // 2, H // 2 - 20
+    cx, cy = W // 2, H // 2 - _s(20)
 
     # Expanding violet ring burst
     for i in range(4):
         phase = elapsed * 2.2 - i * 0.45
         frac = phase % 1.0
-        r = int((70 + 150 * frac) * (1.0 - frac * 0.4))
+        r = int((_s(70) + _s(150) * frac) * (1.0 - frac * 0.4))
         alpha = max(0.0, 1.0 - frac)
         color = tuple(int(INDIGO[c] + (VIOLET_HI[c] - INDIGO[c]) * alpha) for c in range(3))
         if r > 0:
-            cv2.circle(canvas, (cx, cy), r, color, max(1, int(4 * alpha)), cv2.LINE_AA)
+            cv2.circle(canvas, (cx, cy), r, color, max(1, _th(4 * alpha)), cv2.LINE_AA)
 
     # Dragon mark bursts to full presence
     pulse = 0.6 + 0.4 * abs(np.sin(elapsed * 5))
-    draw_dragon_mark(canvas, cx, cy, int(72 * pulse), VIOLET, glow=True)
+    draw_dragon_mark(canvas, cx, cy, int(_s(72) * pulse), VIOLET, glow=True)
 
     # Green confirmation check, ring'd — the one semantic (unlock) accent
     scale_in = min(1.0, elapsed * 2.5)
-    cv2.circle(canvas, (cx, cy), int(72 * pulse) + 14, UNLOCK, 2, cv2.LINE_AA)
+    cv2.circle(canvas, (cx, cy), int(_s(72) * pulse) + _s(14), UNLOCK, _th(2), cv2.LINE_AA)
 
-    legibility_halo(canvas, cx, cy + 180, 460, 120, strength=0.55)
-    put_centered(canvas, "AUTHORIZED", cy + 150, 1.6 * scale_in, INK, 3)
-    put_centered(canvas, name, cy + 196, 0.72 * scale_in, VIOLET_HI, 1)
+    legibility_halo(canvas, cx, cy + _s(180), _s(460), _s(120), strength=0.55)
+    put_centered(canvas, "AUTHORIZED", cy + _s(150), 1.6 * scale_in, INK, 3)
+    put_centered(canvas, name, cy + _s(196), 0.72 * scale_in, VIOLET_HI, 1)
 
 
 def draw_qr_countdown(canvas: np.ndarray, elapsed: float, name: str, countdown: int):
     """Phase 2 (5-10s): get-ready countdown before capture begins."""
     brand_gradient(canvas)
     draw_wave_field(canvas, elapsed + 3.0, intensity=0.6)
-    cx, cy = W // 2, H // 2 - 20
+    cx, cy = W // 2, H // 2 - _s(20)
 
     # Depleting violet sweep ring
     frac = max(0.0, min(1.0, 1.0 - elapsed / 5.0))
-    cv2.ellipse(canvas, (cx, cy), (118, 118), -90, 0, 360, INDIGO_LIFT, 8, cv2.LINE_AA)
-    cv2.ellipse(canvas, (cx, cy), (118, 118), -90, 0, int(360 * frac), VIOLET, 8, cv2.LINE_AA)
+    cv2.ellipse(canvas, (cx, cy), (_s(118), _s(118)), -90, 0, 360, INDIGO_LIFT, _th(8), cv2.LINE_AA)
+    cv2.ellipse(canvas, (cx, cy), (_s(118), _s(118)), -90, 0, int(360 * frac), VIOLET, _th(8), cv2.LINE_AA)
 
     # Big countdown digit
     digit = str(max(0, countdown))
     txt_scale = 4.6 + 0.6 * abs(np.sin(elapsed * 3.14))
-    legibility_halo(canvas, cx, cy + 20, 240, 240, strength=0.5)
-    put_centered(canvas, digit, cy + 42, txt_scale, INK, 6)
+    legibility_halo(canvas, cx, cy + _s(20), _s(240), _s(240), strength=0.5)
+    put_centered(canvas, digit, cy + _s(42), txt_scale, INK, 6)
 
-    legibility_halo(canvas, cx, cy + 185, 420, 110, strength=0.55)
-    put_centered(canvas, "GET READY", cy + 168, 0.9, VIOLET_HI, 2)
-    put_centered(canvas, f"Enrolling  {name}", cy + 206, 0.56, MIST, 1)
+    legibility_halo(canvas, cx, cy + _s(185), _s(420), _s(110), strength=0.55)
+    put_centered(canvas, "GET READY", cy + _s(168), 0.9, VIOLET_HI, 2)
+    put_centered(canvas, f"Enrolling  {name}", cy + _s(206), 0.56, MIST, 1)
 
 
 def draw_hud(canvas: np.ndarray, state: State, status: str, db_count: int,
@@ -1157,14 +1251,14 @@ def draw_hud(canvas: np.ndarray, state: State, status: str, db_count: int,
 
     # Top bar — state name only; backend/FPS live in the telemetry panel,
     # and the per-state verdict lives in the status strip, so the top stays clean.
-    cv2.rectangle(canvas, (0, 0), (W, 24), INDIGO_DEEP, -1)
-    cv2.line(canvas, (0, 24), (W, 24), VIOLET_LO, 1, cv2.LINE_AA)
-    cv2.putText(canvas, f"{state.name:<13}", (10, 17),
-                FONT_MONO, 1.1, VIOLET_HI, 1, cv2.LINE_AA)
+    cv2.rectangle(canvas, (0, 0), (W, _s(24)), INDIGO_DEEP, -1)
+    cv2.line(canvas, (0, _s(24)), (W, _s(24)), VIOLET_LO, _th(1), cv2.LINE_AA)
+    cv2.putText(canvas, f"{state.name:<13}", (_s(10), _s(17)),
+                FONT_MONO, 1.1 * S, VIOLET_HI, _th(1), cv2.LINE_AA)
 
     # Bottom hint bar
-    cv2.rectangle(canvas, (0, H - 22), (W, H), INDIGO_DEEP, -1)
-    cv2.putText(canvas, hint, (10, H - 7), FONT_MONO, 0.95, VIOLET_LO, 1, cv2.LINE_AA)
+    cv2.rectangle(canvas, (0, H - _s(22)), (W, H), INDIGO_DEEP, -1)
+    cv2.putText(canvas, hint, (_s(10), H - _s(7)), FONT_MONO, 0.95 * S, VIOLET_LO, _th(1), cv2.LINE_AA)
 
 
 # ── System stats monitor ───────────────────────────────────────────────────────
@@ -1207,7 +1301,7 @@ class StatsMonitor(threading.Thread):
 
 def _bar(w: int, pct: float, color: tuple) -> np.ndarray:
     """Horizontal meter: indigo track, colored fill."""
-    bar = np.empty((8, w, 3), dtype=np.uint8)
+    bar = np.empty((_s(8), w, 3), dtype=np.uint8)
     bar[:] = INDIGO_LIFT
     fill = max(1, int(w * min(pct, 100.0) / 100.0))
     bar[:, :fill] = color
@@ -1225,19 +1319,21 @@ def draw_stats_panel(canvas: np.ndarray,
       - Per-core CPU bars (load heat is a meter, kept green→red)
       - RAM bar
     """
-    PW, PH = 262, 212
-    px = W - PW - 12
-    py = H - PH - 34           # above the hint bar
+    PW, PH = _s(262), _s(212)
+    px = W - PW - _s(12)
+    py = H - PH - _s(34)           # above the hint bar
+    pad = _s(8)
 
     overlay = canvas.copy()
-    cv2.rectangle(overlay, (px - 8, py - 8), (px + PW + 8, py + PH + 8),
+    cv2.rectangle(overlay, (px - pad, py - pad), (px + PW + pad, py + PH + pad),
                   INDIGO_DEEP, -1)
     cv2.addWeighted(overlay, 0.82, canvas, 0.18, 0, canvas)
-    cv2.rectangle(canvas, (px - 8, py - 8), (px + PW + 8, py + PH + 8),
-                  VIOLET_LO, 1, cv2.LINE_AA)
+    cv2.rectangle(canvas, (px - pad, py - pad), (px + PW + pad, py + PH + pad),
+                  VIOLET_LO, _th(1), cv2.LINE_AA)
 
-    y = py + 16
+    y = py + _s(16)
     F = cv2.FONT_HERSHEY_PLAIN
+    FS = 1.1 * S
 
     # ── Backend FPS rows ─────────────────────────────────────────────────────
     for label, fps, is_active, ready in [
@@ -1245,9 +1341,9 @@ def draw_stats_panel(canvas: np.ndarray,
         ("NPU", npu_fps, active_backend == "npu", npu_ready),
     ]:
         if is_active:
-            cv2.rectangle(canvas, (px - 4, y - 12), (px + PW + 4, y + 6),
+            cv2.rectangle(canvas, (px - _s(4), y - _s(12)), (px + PW + _s(4), y + _s(6)),
                           INDIGO_LIFT, -1)
-            cv2.rectangle(canvas, (px - 4, y - 12), (px - 2, y + 6), VIOLET, -1)
+            cv2.rectangle(canvas, (px - _s(4), y - _s(12)), (px - _s(2), y + _s(6)), VIOLET, -1)
 
         if not ready:
             fps_str, col = "loading", VIOLET_LO
@@ -1256,44 +1352,45 @@ def draw_stats_panel(canvas: np.ndarray,
             col = VIOLET_HI if is_active else MIST
 
         if is_active:
-            tri = np.array([(px, y - 8), (px, y), (px + 7, y - 4)], np.int32)
+            tri = np.array([(px, y - _s(8)), (px, y), (px + _s(7), y - _s(4))], np.int32)
             cv2.fillConvexPoly(canvas, tri, VIOLET, cv2.LINE_AA)
-        cv2.putText(canvas, label, (px + 14, y), F, 1.1, col, 1, cv2.LINE_AA)
-        (sw, _), _ = cv2.getTextSize(fps_str, F, 1.1, 1)
-        cv2.putText(canvas, fps_str, (px + PW - sw, y), F, 1.1, col, 1, cv2.LINE_AA)
-        y += 20
+        cv2.putText(canvas, label, (px + _s(14), y), F, FS, col, _th(1), cv2.LINE_AA)
+        (sw, _), _ = cv2.getTextSize(fps_str, F, FS, _th(1))
+        cv2.putText(canvas, fps_str, (px + PW - sw, y), F, FS, col, _th(1), cv2.LINE_AA)
+        y += _s(20)
 
-    y += 6
-    cv2.line(canvas, (px, y), (px + PW, y), VIOLET_LO, 1, cv2.LINE_AA)
-    y += 12
+    y += _s(6)
+    cv2.line(canvas, (px, y), (px + PW, y), VIOLET_LO, _th(1), cv2.LINE_AA)
+    y += _s(12)
 
     # ── Per-core CPU bars ─────────────────────────────────────────────────────
     cv2.putText(canvas, f"CPU CORES   avg {cpu_total:.0f}%",
-                (px, y), F, 0.95, MIST, 1, cv2.LINE_AA)
-    y += 12
+                (px, y), F, 0.95 * S, MIST, _th(1), cv2.LINE_AA)
+    y += _s(12)
 
     cols_n = 4
-    bar_w = (PW - (cols_n - 1) * 4) // cols_n
+    gap = _s(4)
+    bar_w = (PW - (cols_n - 1) * gap) // cols_n
     for i, pct in enumerate(cpu_cores):
-        bx = px + (i % cols_n) * (bar_w + 4)
-        by = y + (i // cols_n) * 18
+        bx = px + (i % cols_n) * (bar_w + gap)
+        by = y + (i // cols_n) * _s(18)
         heat = min(255, int(pct * 2.55))
         bar_col = (0, 255 - heat, heat)       # green→red as load rises
-        canvas[by:by + 8, bx:bx + bar_w] = _bar(bar_w, pct, bar_col)
-        cv2.putText(canvas, f"C{i}", (bx, by + 18), F, 0.75, VIOLET_LO, 1, cv2.LINE_AA)
+        canvas[by:by + _s(8), bx:bx + bar_w] = _bar(bar_w, pct, bar_col)
+        cv2.putText(canvas, f"C{i}", (bx, by + _s(18)), F, 0.75 * S, VIOLET_LO, _th(1), cv2.LINE_AA)
 
     row_count = (len(cpu_cores) + cols_n - 1) // cols_n
-    y += row_count * 18 + 10
+    y += row_count * _s(18) + _s(10)
 
-    cv2.line(canvas, (px, y), (px + PW, y), VIOLET_LO, 1, cv2.LINE_AA)
-    y += 12
+    cv2.line(canvas, (px, y), (px + PW, y), VIOLET_LO, _th(1), cv2.LINE_AA)
+    y += _s(12)
 
     # ── RAM bar ───────────────────────────────────────────────────────────────
     cv2.putText(canvas, f"RAM   {ram_used_mb:.0f} / {ram_total_mb:.0f} MB   {ram_pct:.0f}%",
-                (px, y), F, 0.95, MIST, 1, cv2.LINE_AA)
-    y += 10
+                (px, y), F, 0.95 * S, MIST, _th(1), cv2.LINE_AA)
+    y += _s(10)
     ram_col = (0, int(255 * (1 - ram_pct / 100)), int(255 * ram_pct / 100))
-    canvas[y:y + 8, px:px + PW] = _bar(PW, ram_pct, ram_col)
+    canvas[y:y + _s(8), px:px + PW] = _bar(PW, ram_pct, ram_col)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1358,6 +1455,10 @@ def main():
     verdict_since = {"state": None, "at": 0.0}   # pulse clock for the access banner
 
     cv2.namedWindow("Dragonwing Doorbell", cv2.WINDOW_NORMAL)
+    # Fill the HDMI panel: size the window to the native canvas, then force
+    # fullscreen so the compositor never leaves a maximized-but-windowed gap.
+    cv2.resizeWindow("Dragonwing Doorbell", W, H)
+    cv2.moveWindow("Dragonwing Doorbell", 0, 0)
     cv2.setWindowProperty("Dragonwing Doorbell", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     print("=== DRAGONWING DOORBELL ===")
