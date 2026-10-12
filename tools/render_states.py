@@ -62,13 +62,11 @@ def main():
 
     db.draw_camera_state(canvas, frame, faces, db.INF_W, db.INF_H,
                          db.UNLOCK, "UNLOCKED   Alice", db.UNLOCK)
-    db.draw_access_banner(canvas, "UNLOCKED  ALICE", db.UNLOCK, 1.3)
     db.draw_hud(canvas, db.State.RECOGNIZED, "Welcome, Alice!", 2, 15.3, "npu")
     shot("04_recognized.png", canvas)
 
     db.draw_camera_state(canvas, frame, faces, db.INF_W, db.INF_H,
                          db.LOCK, "ACCESS DENIED", db.LOCK)
-    db.draw_access_banner(canvas, "ACCESS DENIED", db.LOCK, 1.3)
     db.draw_hud(canvas, db.State.UNKNOWN, "Unknown person", 2, 12.1, "cpu")
     shot("05_unknown.png", canvas)
 

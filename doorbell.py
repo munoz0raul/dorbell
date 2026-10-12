@@ -692,6 +692,94 @@ GREEN, RED, AMBER, PURPLE, WHITE, DIM, DARK = (
 FONT      = cv2.FONT_HERSHEY_SIMPLEX
 FONT_MONO = cv2.FONT_HERSHEY_PLAIN
 
+# ── Official Dragonwing mark (embedded) ──────────────────────────────────────
+# The real circular dragon-head mark, cropped from assets/Qualcomm-Dragonwing-
+# logo.jpeg and recolored light-on-transparent so it reads on the indigo bar.
+# Embedded as base64 so the single-file scp-to-board deploy needs no assets dir.
+_DRAGON_MARK_PNG_B64 = (
+    "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"
+)
+_DRAGON_MARK: Optional[np.ndarray] = None
+
+
+def _load_dragon_mark() -> Optional[np.ndarray]:
+    """Decode the embedded mark to a BGRA array once; None on any failure."""
+    global _DRAGON_MARK
+    if _DRAGON_MARK is None:
+        try:
+            import base64
+            raw = base64.b64decode(_DRAGON_MARK_PNG_B64)
+            arr = np.frombuffer(raw, np.uint8)
+            _DRAGON_MARK = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+        except Exception:
+            _DRAGON_MARK = None
+    return _DRAGON_MARK
+
+
+def draw_logo_mark(canvas: np.ndarray, cx: int, cy: int, size: int,
+                   fallback_color: tuple = VIOLET):
+    """
+    Blit the official Dragonwing mark centered at (cx, cy), scaled to `size`.
+    Alpha-composited over whatever is already on the canvas. Falls back to the
+    drawn vector glyph if the embedded asset can't be decoded.
+    """
+    mark = _load_dragon_mark()
+    if mark is None or mark.shape[2] != 4:
+        draw_dragon_mark(canvas, cx, cy, size // 2, fallback_color, bg=INDIGO_DEEP)
+        return
+    m = cv2.resize(mark, (size, size), interpolation=cv2.INTER_AREA)
+    x0, y0 = cx - size // 2, cy - size // 2
+    x1, y1 = x0 + size, y0 + size
+    cx0, cy0 = max(0, x0), max(0, y0)
+    cx1, cy1 = min(W, x1), min(H, y1)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return
+    sub = m[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
+    a = sub[:, :, 3:4].astype(np.float32) / 255.0
+    roi = canvas[cy0:cy1, cx0:cx1].astype(np.float32)
+    roi = roi * (1.0 - a) + sub[:, :, :3].astype(np.float32) * a
+    canvas[cy0:cy1, cx0:cx1] = roi.astype(np.uint8)
+
+
 # Precomputed vertical indigo gradient (INDIGO_DEEP at top → INDIGO_LIFT at bottom).
 _GRADIENT = None
 
@@ -868,8 +956,10 @@ def draw_access_banner(canvas: np.ndarray, text: str, color: tuple, t: float):
 def draw_face_overlays(canvas: np.ndarray, faces: list, color: tuple,
                         sx: float, sy: float, ox: int, oy: int):
     """
-    Draw bounding box, 5 key-points, and 106 landmarks.
-    faces are in inference-frame coords; sx/sy/ox/oy map to canvas coords.
+    Draw bounding box + 5 key-points. faces are in inference-frame coords;
+    sx/sy/ox/oy map them onto the letterboxed display rectangle. The dense
+    106-landmark cloud is intentionally skipped — it costs 100+ draws per
+    face per frame and adds visual noise without aiding the demo read.
     """
     for face in faces:
         x1, y1, x2, y2 = face.bbox
@@ -879,11 +969,7 @@ def draw_face_overlays(canvas: np.ndarray, faces: list, color: tuple,
                       color, 2)
         if face.kps is not None:
             for x, y in face.kps:
-                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), 5, color, -1)
-        lm = getattr(face, 'landmark_2d_106', None)
-        if lm is not None:
-            for x, y in lm:
-                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), 2, color, -1)
+                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), 4, color, -1)
         # confidence score
         score = getattr(face, 'det_score', None)
         if score is not None:
@@ -968,10 +1054,13 @@ def draw_camera_state(canvas: np.ndarray, frame: np.ndarray, faces: list,
     scale, _, ox, oy = composite_frame(canvas, frame)
 
     fh, fw = frame.shape[:2]
-    # Inference frame is inf_w × inf_h; faces map onto the full canvas.
-    lm_sx = W / inf_w
-    lm_sy = H / inf_h
-    draw_face_overlays(canvas, faces, border, lm_sx, lm_sy, 0, 0)
+    # Map inference-frame coords (inf_w×inf_h) onto the *letterboxed* display
+    # rectangle, not the full canvas: through the camera frame, then the same
+    # scale+offset the frame was composited with. Keeps the box on the face.
+    dw, dh = fw * scale, fh * scale
+    lm_sx = dw / inf_w
+    lm_sy = dh / inf_h
+    draw_face_overlays(canvas, faces, border, lm_sx, lm_sy, ox, oy)
 
     # Corner brackets in the state color (violet when neutral, green/red/amber per state)
     fx2, fy2 = ox + int(fw * scale), oy + int(fh * scale)
@@ -987,12 +1076,12 @@ def draw_camera_state(canvas: np.ndarray, frame: np.ndarray, faces: list,
     cv2.rectangle(overlay, (0, panel_y), (W, H), INDIGO_DEEP, -1)
     cv2.addWeighted(overlay, 0.82, canvas, 0.18, 0, canvas)
     cv2.line(canvas, (0, panel_y), (W, panel_y), VIOLET_LO, 1, cv2.LINE_AA)
-    draw_dragon_mark(canvas, 54, panel_y + 42, 24, VIOLET, bg=INDIGO_DEEP)
+    draw_logo_mark(canvas, 54, panel_y + 42, 56)
 
-    # Status dot + label, left-aligned after the mark
-    cv2.circle(canvas, (104, panel_y + 42), 6, label_color, -1, cv2.LINE_AA)
-    cv2.putText(canvas, label.strip(), (122, panel_y + 50),
-                FONT, 0.85, label_color, 2, cv2.LINE_AA)
+    # Status dot + label, left-aligned after the mark — the sole verdict now.
+    cv2.circle(canvas, (108, panel_y + 42), 7, label_color, -1, cv2.LINE_AA)
+    cv2.putText(canvas, label.strip(), (126, panel_y + 51),
+                FONT, 1.0, label_color, 2, cv2.LINE_AA)
 
     if reg_progress:
         n, total = reg_progress
@@ -1066,25 +1155,16 @@ def draw_hud(canvas: np.ndarray, state: State, status: str, db_count: int,
              fps: float = 0.0, backend: str = "cpu"):
     hint = "B toggle CPU/NPU   K known   U unknown   R enroll   ESC standby   Q quit"
 
-    # Top bar
+    # Top bar — state name only; backend/FPS live in the telemetry panel,
+    # and the per-state verdict lives in the status strip, so the top stays clean.
     cv2.rectangle(canvas, (0, 0), (W, 24), INDIGO_DEEP, -1)
     cv2.line(canvas, (0, 24), (W, 24), VIOLET_LO, 1, cv2.LINE_AA)
     cv2.putText(canvas, f"{state.name:<13}", (10, 17),
                 FONT_MONO, 1.1, VIOLET_HI, 1, cv2.LINE_AA)
-    cv2.putText(canvas, status, (150, 17), FONT_MONO, 1.0, MIST, 1, cv2.LINE_AA)
 
     # Bottom hint bar
     cv2.rectangle(canvas, (0, H - 22), (W, H), INDIGO_DEEP, -1)
     cv2.putText(canvas, hint, (10, H - 7), FONT_MONO, 0.95, VIOLET_LO, 1, cv2.LINE_AA)
-
-    # FPS badge — top right. Violet when NPU active, mist when CPU.
-    is_npu = "npu" in backend
-    fps_color = VIOLET_HI if is_npu else MIST
-    label = f"{backend.upper()}  {fps:4.1f} FPS"
-    (tw, _), _ = cv2.getTextSize(label, FONT_MONO, 1.1, 1)
-    bx = W - tw - 16
-    cv2.circle(canvas, (bx - 10, 13), 4, UNLOCK if is_npu else VIOLET_LO, -1, cv2.LINE_AA)
-    cv2.putText(canvas, label, (bx, 17), FONT_MONO, 1.1, fps_color, 1, cv2.LINE_AA)
 
 
 # ── System stats monitor ───────────────────────────────────────────────────────
@@ -1389,22 +1469,6 @@ def main():
                 draw_camera_state(canvas, raw_frame, faces, INF_W, INF_H,
                                   VIOLET, f"ENROLLING   {app.reg_name}", VIOLET,
                                   reg_progress=(reg_n, reg_tot))
-
-            # The loud verdict (DESIGN.md signature): a full-width flat banner
-            # over the live feed, display-scale, pulsing on appearance.
-            if state in (State.RECOGNIZED, State.UNKNOWN):
-                if verdict_since["state"] != state:
-                    verdict_since["state"] = state
-                    verdict_since["at"] = now
-                vt = now - verdict_since["at"]
-                if state == State.RECOGNIZED:
-                    name = (match or "").upper()
-                    btext = f"UNLOCKED  {name}".strip()
-                    draw_access_banner(canvas, btext, UNLOCK, vt)
-                else:
-                    draw_access_banner(canvas, "ACCESS DENIED", LOCK, vt)
-            else:
-                verdict_since["state"] = None
 
         npu_tag = "" if _ready["npu"] else " (loading...)"
         draw_hud(canvas, state, status, db_count,
