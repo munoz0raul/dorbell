@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dragonwing Doorbell (NPU)
+Comment=Face-recognition doorbell on HTP v75 NPU
+Exec=bash /home/ubuntu/run_doorbell.sh npu
+Icon=/home/ubuntu/.local/share/icons/dragonwing-doorbell.png
+Terminal=false
+Categories=Utility;
+StartupNotify=true

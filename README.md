@@ -156,6 +156,62 @@ session (`DISPLAY=:0`), so you can launch it from a terminal and it appears on t
 | **Q** | Quit |
 | *QR code* | Showing a LinkedIn QR code triggers authorization + enrollment automatically |
 
+### 2.6 — Keep the display awake (demo boards)
+
+Ubuntu's GNOME desktop blanks the HDMI output after a few minutes of inactivity, which
+interrupts an unattended demo. On this board the Xwayland server has **no DPMS extension**
+(`xset -dpms` reports *"Server does not have the DPMS Extension"*), so the screensaver /
+`xset` route alone won't keep it on — GNOME's own **idle manager** is what blanks it. Disable
+it with `gsettings` (the settings persist in dconf across reboots):
+
+```bash
+# Run inside the board's desktop session (or over SSH with the session bus exported):
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+gsettings set org.gnome.desktop.session idle-delay 0                              # never go idle
+gsettings set org.gnome.desktop.screensaver idle-activation-enabled false
+gsettings set org.gnome.desktop.screensaver lock-enabled false                    # no lock screen
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+gsettings set org.gnome.settings-daemon.plugins.power idle-dim false              # no dimming
+```
+
+`run_doorbell.sh` re-asserts all of the above on every launch, so a freshly flashed or
+reset board is always demo-ready. To re-enable normal blanking later, set `idle-delay` back
+to a non-zero value (default is `300`, i.e. 5 minutes).
+
+### 2.7 — Desktop launcher (one-click NPU start)
+
+For an appliance-like demo you can start the doorbell by double-clicking a desktop icon
+instead of opening a terminal. Two small files do it — both are in the repo:
+
+- **`run_doorbell.sh`** — the launcher wrapper (sets `DISPLAY`/`XAUTHORITY`, keeps the
+  display awake per §2.6, stops any prior instance, then runs `doorbell.py`).
+- **`dragonwing-doorbell-npu.desktop`** — the GNOME desktop entry that calls it with
+  `--backend npu` and shows the Dragonwing dragon-head mark as its icon.
+
+Install them on the board:
+
+```bash
+# Launcher + the icon (the Dragonwing mark, assets/2.png)
+cp run_doorbell.sh                 ~/run_doorbell.sh
+chmod +x ~/run_doorbell.sh
+mkdir -p ~/.local/share/icons
+cp assets/2.png                    ~/.local/share/icons/dragonwing-doorbell.png
+
+# Desktop entry
+cp dragonwing-doorbell-npu.desktop ~/Desktop/
+chmod +x ~/Desktop/dragonwing-doorbell-npu.desktop
+
+# Mark it trusted so GNOME launches it without an "Allow Launching" prompt
+gio set ~/Desktop/dragonwing-doorbell-npu.desktop metadata::trusted true
+```
+
+Double-click **Dragonwing Doorbell (NPU)** on the desktop to launch on the HTP v75 NPU.
+Because the launcher stops any running instance first, clicking it again safely restarts
+the demo rather than fighting over the camera. The wrapper runs the CPU path when invoked
+as `run_doorbell.sh cpu`; duplicate the `.desktop` file with that argument if you want a
+second CPU icon.
+
 ---
 
 ## Architecture
@@ -200,6 +256,8 @@ live.
 
 ```
 doorbell.py            The application (single file — scp to the board and run)
+run_doorbell.sh        Board launcher — sets display env, keeps screen awake, single-instance
+dragonwing-doorbell-npu.desktop  GNOME desktop icon that one-click-launches the NPU backend
 aihub_compile.py       Host: ONNX -> AI Hub W8A16 quantize + HTP v75 compile -> DLC
 benchmark.py           CPU vs NPU latency benchmark
 tools/
@@ -224,6 +282,7 @@ assets/                Dragonwing brand references + sample LinkedIn QR
 | NPU backend seems to use the CPU | The Python QNNExecutionProvider silently falls back to CPU on this board — that's why the NPU path uses `qnn-net-run`, not ORT. If FPS and CPU load look identical to CPU mode, confirm you launched with `--backend npu` and the context binaries exist. |
 | `QAI_HUB_TOKEN is not set` | Export your AI Hub token before `aihub_compile.py` (see `.env.example`), or run `qai-hub configure --api_token ...` once. |
 | Keyboard keys do nothing | Click the full-screen window first so OpenCV's highgui receives focus. |
+| Display blanks / screen turns off mid-demo | GNOME's idle manager blanks the HDMI output (this Xwayland server has no DPMS extension, so `xset -dpms` alone won't help). Disable idle blanking — see **§2.6**. `run_doorbell.sh` already re-asserts these on every launch. |
 
 ---
 
