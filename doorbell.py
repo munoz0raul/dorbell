@@ -844,9 +844,10 @@ def draw_access_banner(canvas: np.ndarray, text: str, color: tuple, t: float):
     glow, or halo on the block; its certainty is pure solid color and size.
     The type pulses subtly on appearance.
     """
-    band_h = 188
-    y0 = (H - band_h) // 2
-    y1 = y0 + band_h
+    # Low band, clear of the face: sits in the lower third, above the status bar.
+    band_h = 104
+    y1 = H - 96
+    y0 = y1 - band_h
 
     # Flat Deep-Indigo block, full width, square corners.
     canvas[y0:y1, 0:W] = INDIGO_DEEP
@@ -856,8 +857,8 @@ def draw_access_banner(canvas: np.ndarray, text: str, color: tuple, t: float):
 
     # Display-scale verdict, subtly pulsing on appearance.
     pulse = 1.0 - 0.5 * np.exp(-t * 5.0) * abs(np.sin(t * 9.0))
-    scale = 2.9 * pulse
-    thickness = 6
+    scale = 1.7 * pulse
+    thickness = 4
     (tw, th), _ = cv2.getTextSize(text, FONT, scale, thickness)
     tx = (W - tw) // 2
     ty = y0 + (band_h + th) // 2
