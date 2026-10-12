@@ -771,6 +771,13 @@ def draw_dragon_mark(canvas: np.ndarray, cx: int, cy: int, r: int,
     ], dtype=np.int32)
     cv2.fillConvexPoly(canvas, beak, color, cv2.LINE_AA)
 
+    # Flared tail curl sweeping down and to the right — the official-mark
+    # geometry that closes the head + body into a near-circular emblem.
+    tail_th = max(2, int(r * 0.17))
+    cv2.ellipse(canvas, (int(cx + r * 0.12), int(cy + r * 0.44)),
+                (int(r * 0.74), int(r * 0.54)), 0, -34, 122,
+                color, tail_th, cv2.LINE_AA)
+
     # Inner curl (the eye socket), then the negative-space eye.
     cv2.circle(canvas, (int(cx + r * 0.30), int(cy + r * 0.12)),
                int(r * 0.34), bg, -1, cv2.LINE_AA)
@@ -799,6 +806,62 @@ def draw_wordmark(canvas: np.ndarray, cx: int, cy: int, scale: float = 1.0):
     put_tracked(canvas, "DRAGONWING", cx, cy, 0.95 * scale, INK, 2, int(10 * scale))
     put_tracked(canvas, "D O O R B E L L", cx, cy + int(34 * scale),
                 0.5 * scale, VIOLET_HI, 1, int(2 * scale))
+
+
+def legibility_halo(canvas: np.ndarray, cx: int, cy: int, w: int, h: int,
+                    strength: float = 0.72):
+    """
+    The one permitted 'shadow' (DESIGN.md Legibility-Halo Rule): a soft
+    Deep-Indigo pad behind critical text or the mark when it sits over the
+    camera feed or the wave field. Elliptical radial falloff, never a hard
+    rectangle — for contrast, never decoration.
+    """
+    x0, y0 = max(0, cx - w // 2), max(0, cy - h // 2)
+    x1, y1 = min(W, cx + w // 2), min(H, cy + h // 2)
+    if x1 <= x0 or y1 <= y0:
+        return
+    region = canvas[y0:y1, x0:x1].astype(np.float32)
+    rh, rw = region.shape[:2]
+
+    # Elliptical alpha: 1 at centre, feathering to 0 at the edge.
+    yy, xx = np.ogrid[0:rh, 0:rw]
+    nx = (xx - rw / 2) / (rw / 2)
+    ny = (yy - rh / 2) / (rh / 2)
+    d = np.sqrt(nx * nx + ny * ny)
+    alpha = np.clip(1.0 - d, 0.0, 1.0) ** 1.6 * strength
+    alpha = alpha[..., None]
+
+    pad = np.array(INDIGO_DEEP, dtype=np.float32)
+    region = region * (1.0 - alpha) + pad * alpha
+    canvas[y0:y1, x0:x1] = region.astype(np.uint8)
+
+
+def draw_access_banner(canvas: np.ndarray, text: str, color: tuple, t: float):
+    """
+    The signature verdict component (DESIGN.md Access Banner + Flat-Verdict
+    Rule): a full-width, flat, square-cornered Deep-Indigo block carrying the
+    verdict in display-scale type — the loudest thing on screen. No gradient,
+    glow, or halo on the block; its certainty is pure solid color and size.
+    The type pulses subtly on appearance.
+    """
+    band_h = 188
+    y0 = (H - band_h) // 2
+    y1 = y0 + band_h
+
+    # Flat Deep-Indigo block, full width, square corners.
+    canvas[y0:y1, 0:W] = INDIGO_DEEP
+    # Thin signal-color rules top and bottom seat the block without softening it.
+    cv2.line(canvas, (0, y0), (W, y0), color, 3, cv2.LINE_AA)
+    cv2.line(canvas, (0, y1), (W, y1), color, 3, cv2.LINE_AA)
+
+    # Display-scale verdict, subtly pulsing on appearance.
+    pulse = 1.0 - 0.5 * np.exp(-t * 5.0) * abs(np.sin(t * 9.0))
+    scale = 2.9 * pulse
+    thickness = 6
+    (tw, th), _ = cv2.getTextSize(text, FONT, scale, thickness)
+    tx = (W - tw) // 2
+    ty = y0 + (band_h + th) // 2
+    cv2.putText(canvas, text, (tx, ty), FONT, scale, color, thickness, cv2.LINE_AA)
 
 
 def draw_face_overlays(canvas: np.ndarray, faces: list, color: tuple,
@@ -842,9 +905,10 @@ def draw_loading(canvas: np.ndarray, t: float):
                 VIOLET_HI, 3, cv2.LINE_AA)
     cv2.circle(canvas, (cx, cy), 120, VIOLET_LO, 1, cv2.LINE_AA)
 
-    draw_wordmark(canvas, cx, cy + 180, 1.1)
     dots = "." * (int(t * 2) % 4)
     glow_c = tuple(int(MIST[c] + (VIOLET_HI[c] - MIST[c]) * pulse) for c in range(3))
+    legibility_halo(canvas, cx, cy + 215, 440, 170, strength=0.6)
+    draw_wordmark(canvas, cx, cy + 180, 1.1)
     put_centered(canvas, f"Initializing neural engines{dots}", cy + 250, 0.6, glow_c, 1)
     put_centered(canvas, "InsightFace buffalo_sc    HTP v75", cy + 282, 0.46, VIOLET_LO, 1)
 
@@ -874,6 +938,7 @@ def draw_standby(canvas: np.ndarray, t: float, db_count: int):
     cv2.ellipse(canvas, (cx, ly), (lw // 3, lh // 2), 0, 180, 360, shackle_c, 4, cv2.LINE_AA)
     cv2.circle(canvas, (cx, ly + lh // 2 - 2), 5, INDIGO_DEEP, -1, cv2.LINE_AA)
 
+    legibility_halo(canvas, cx, cy + 142, 430, 110, strength=0.62)
     put_centered(canvas, "DOORBELL READY", cy + 128, 0.95, INK, 2)
     put_centered(canvas, "Awaiting visitor", cy + 162, 0.56, MIST, 1)
 
@@ -969,6 +1034,7 @@ def draw_qr_authorized(canvas: np.ndarray, elapsed: float, name: str):
     scale_in = min(1.0, elapsed * 2.5)
     cv2.circle(canvas, (cx, cy), int(72 * pulse) + 14, UNLOCK, 2, cv2.LINE_AA)
 
+    legibility_halo(canvas, cx, cy + 180, 460, 120, strength=0.55)
     put_centered(canvas, "AUTHORIZED", cy + 150, 1.6 * scale_in, INK, 3)
     put_centered(canvas, name, cy + 196, 0.72 * scale_in, VIOLET_HI, 1)
 
@@ -987,8 +1053,10 @@ def draw_qr_countdown(canvas: np.ndarray, elapsed: float, name: str, countdown: 
     # Big countdown digit
     digit = str(max(0, countdown))
     txt_scale = 4.6 + 0.6 * abs(np.sin(elapsed * 3.14))
+    legibility_halo(canvas, cx, cy + 20, 240, 240, strength=0.5)
     put_centered(canvas, digit, cy + 42, txt_scale, INK, 6)
 
+    legibility_halo(canvas, cx, cy + 185, 420, 110, strength=0.55)
     put_centered(canvas, "GET READY", cy + 168, 0.9, VIOLET_HI, 2)
     put_centered(canvas, f"Enrolling  {name}", cy + 206, 0.56, MIST, 1)
 
@@ -1206,6 +1274,7 @@ def main():
     t0 = time.time()
     qr_detector = QRDetector()
     inf_frame_cache: Optional[np.ndarray] = None
+    verdict_since = {"state": None, "at": 0.0}   # pulse clock for the access banner
 
     cv2.namedWindow("Dragonwing Doorbell", cv2.WINDOW_NORMAL)
     cv2.setWindowProperty("Dragonwing Doorbell", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
@@ -1319,6 +1388,22 @@ def main():
                 draw_camera_state(canvas, raw_frame, faces, INF_W, INF_H,
                                   VIOLET, f"ENROLLING   {app.reg_name}", VIOLET,
                                   reg_progress=(reg_n, reg_tot))
+
+            # The loud verdict (DESIGN.md signature): a full-width flat banner
+            # over the live feed, display-scale, pulsing on appearance.
+            if state in (State.RECOGNIZED, State.UNKNOWN):
+                if verdict_since["state"] != state:
+                    verdict_since["state"] = state
+                    verdict_since["at"] = now
+                vt = now - verdict_since["at"]
+                if state == State.RECOGNIZED:
+                    name = (match or "").upper()
+                    btext = f"UNLOCKED  {name}".strip()
+                    draw_access_banner(canvas, btext, UNLOCK, vt)
+                else:
+                    draw_access_banner(canvas, "ACCESS DENIED", LOCK, vt)
+            else:
+                verdict_since["state"] = None
 
         npu_tag = "" if _ready["npu"] else " (loading...)"
         draw_hud(canvas, state, status, db_count,

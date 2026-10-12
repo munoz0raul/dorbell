@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-12T00:00:00Z",
+  "title": "Design System: Dragonwing Doorbell",
+  "platformNote": "Rendering target is an OpenCV highgui NumPy canvas (BGR), not a web/CSS DOM. Component snippets are described geometrically rather than as HTML/CSS, since the live panel's shadow-DOM rendering does not apply to this project. Colors in the frontmatter are RGB hex converted from the canonical BGR tuples in doorbell.py.",
+  "extensions": {
+    "colorMeta": {
+      "indigo":        { "role": "primary",  "displayName": "Midnight Indigo", "canonical": "#31017D", "bgr": [125, 1, 49],   "tonalRamp": ["#0E0126", "#17013D", "#210154", "#2B016B", "#31017D", "#420A96", "#5A1FB5", "#7D4FD1"] },
+      "violet":        { "role": "primary",  "displayName": "Dragon Violet",   "canonical": "#5B0CD9", "bgr": [217, 12, 91],  "tonalRamp": ["#1E0349", "#2C056C", "#3A078F", "#4A09B4", "#5B0CD9", "#7836E3", "#9560EC", "#B288F3"] },
+      "indigo-lift":   { "role": "secondary","displayName": "Lifted Indigo",   "canonical": "#420A96", "bgr": [150, 10, 66] },
+      "indigo-deep":   { "role": "secondary","displayName": "Deep Indigo",     "canonical": "#23015A", "bgr": [90, 1, 35] },
+      "violet-glow":   { "role": "secondary","displayName": "Violet Glow",     "canonical": "#AA78F5", "bgr": [245, 120, 170] },
+      "violet-dim":    { "role": "secondary","displayName": "Dim Violet",      "canonical": "#461E96", "bgr": [150, 30, 70] },
+      "ink":           { "role": "neutral",  "displayName": "Ink",             "canonical": "#FFF0F5", "bgr": [245, 240, 255] },
+      "mist":          { "role": "neutral",  "displayName": "Mist",            "canonical": "#CD9BBE", "bgr": [190, 155, 205] },
+      "unlock-green":  { "role": "signal",   "displayName": "Signal Green",    "canonical": "#5ADC78", "bgr": [120, 220, 90] },
+      "lock-red":      { "role": "signal",   "displayName": "Alarm Red",       "canonical": "#EB4646", "bgr": [70, 70, 235] },
+      "scan-amber":    { "role": "signal",   "displayName": "Scanning Amber",  "canonical": "#3CBEEB", "bgr": [235, 190, 60] }
+    },
+    "typographyMeta": {
+      "display":  { "displayName": "Display",  "purpose": "The recognition verdict banner only — the single largest element on any screen." },
+      "wordmark": { "displayName": "Wordmark", "purpose": "The DRAGONWING / D O O R B E L L brand lockup on loading and standby." },
+      "title":    { "displayName": "Title",    "purpose": "Screen headlines and enrollment names." },
+      "label":    { "displayName": "Label",    "purpose": "Status strings, progress counts, badges." },
+      "mono":     { "displayName": "Mono",     "purpose": "Telemetry panel, HUD readouts, FPS, per-core load, keyboard-hint footer." }
+    },
+    "fonts": [
+      { "name": "FONT_HERSHEY_SIMPLEX", "role": "display/title/wordmark", "note": "Clean single-stroke vector sans; canvas analog to the official Dragonwing humanist sans. ASCII-only." },
+      { "name": "FONT_HERSHEY_PLAIN",   "role": "telemetry/label",        "note": "Lighter, denser stroke for machine readouts. ASCII-only." }
+    ],
+    "canvas": { "width": 1280, "height": 720, "aspect": "16:9", "colorSpace": "BGR", "inferenceFrame": [320, 240] }
+  },
+  "components": [
+    {
+      "name": "Access Banner",
+      "kind": "custom",
+      "refersTo": "banner-unlock / banner-lock",
+      "description": "The loud verdict — the system's climax. Full-width flat block, square corners, Deep-Indigo fill. Signal Green 'UNLOCKED <name>' or Alarm Red 'ACCESS DENIED' in display-scale type that pulses subtly on appearance. No gradient, glow, or halo on the block itself (the Flat-Verdict Rule)."
+    },
+    {
+      "name": "Corner Brackets",
+      "kind": "custom",
+      "refersTo": "corner-bracket",
+      "description": "Four L-shaped brackets, 3px stroke, ~48px arms, framing the detected-face / live-feed region. Dragon Violet at rest; recolored to the state's signal — Scanning Amber while recognizing, Signal Green / Alarm Red on verdict."
+    },
+    {
+      "name": "Dragon Mark",
+      "kind": "custom",
+      "refersTo": "mark",
+      "description": "The beacon. Drawn vector glyph (filled ellipses + convex polygons) with a load-bearing negative-space crescent eye. Centered hero crop with a Violet-Glow pulsing halo on loading/standby; small lockup crop beside the wordmark elsewhere. Never a pasted bitmap."
+    },
+    {
+      "name": "Telemetry Panel",
+      "kind": "card",
+      "refersTo": "stats-panel",
+      "description": "Rectangular, square corners, translucent Deep-Indigo fill, docked lower-corner. Mono type in Mist; per-core CPU meter bars (green->red load gradient, a meter not brand), RAM readout, active-backend row highlighted in Dragon Violet with a drawn triangle marker."
+    },
+    {
+      "name": "HUD Bar",
+      "kind": "nav",
+      "refersTo": "hud-bar",
+      "description": "Thin top band (~26px), Deep-Indigo, violet baseline rule. State name left, status center in Mist mono; FPS badge right — Dragon Violet when NPU, Mist when CPU."
+    },
+    {
+      "name": "Wave Field",
+      "kind": "custom",
+      "refersTo": "wave-field",
+      "description": "The breathing atmosphere behind brand states. cv2.polylines contour strokes in Dim/Dragon Violet over the indigo gradient, drifting slowly with an animation clock. Thin lines, always behind content, never competing with the mark or verdict."
+    }
+  ],
+  "narrative": {
+    "northStar": "The Threshold Sentinel",
+    "overview": "This is the face of a machine standing guard at a doorway. At rest it holds a calm, deep-indigo vigilance — the Dragonwing mark glowing like a beacon over a slow, breathing field of violet contour-waves — and the instant a face resolves it snaps to the certainty of a verdict: green for known, red for denied. The whole system is engineered around that single dramatic moment of recognition. The aesthetic is engineered and confident, not decorative, built to be read at distance on an HDMI panel: bold solid forms, high-contrast light type on indigo, and a strict separation between brand chrome (indigo/violet) and safety signal (green/red/amber). Depth is tonal, never drop-shadowed: a vertical indigo gradient grounds every screen, panels lift via brighter indigo fills, the wave field glows behind, and a soft dark legibility halo sits behind critical text and the mark.",
+    "keyCharacteristics": [
+      "Indigo is the ground of every screen; nothing sits on pure black or gray.",
+      "The brand palette and the access-result palette never trade places.",
+      "Calm atmosphere at rest; a loud, decisive verdict on recognition.",
+      "Bold and solid over thin and precise — built for across-the-room legibility.",
+      "Every mark is a drawn vector construction, ASCII-only type, no bitmaps or Unicode glyphs."
+    ],
+    "rules": [
+      { "name": "The Two-World Rule", "body": "Indigo and violet own identity and chrome; green, red, and amber own the verdict and live load. Neither world ever borrows the other's color.", "section": "colors" },
+      { "name": "The No-Gray Rule", "body": "There are no neutral grays in this system. Every 'gray' is Mist — violet tinted — so the screen never reads generic.", "section": "colors" },
+      { "name": "The Tracked-Caps Rule", "body": "Brand lockups and key labels are uppercase with deliberate letter-spacing. The spacing is the refinement — it signals brand chrome versus raw machine text.", "section": "typography" },
+      { "name": "The ASCII-Only Rule", "body": "Every string is 7-bit ASCII. A dot separator is a space or a drawn glyph; an arrow is a drawn triangle. Never a Unicode character in a Hershey string.", "section": "typography" },
+      { "name": "The Legibility-Halo Rule", "body": "Critical text and the mark get a soft Deep-Indigo pad behind them when over the camera feed or wave field — the one permitted 'shadow', for contrast never decoration.", "section": "elevation" },
+      { "name": "The Flat-Verdict Rule", "body": "The access banner is a flat, bold block — no gradient, glow, or halo. Its certainty is conveyed by pure solid color and size.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do ground every screen in Midnight Indigo (#31017D) — gradient, panel, or flat fill.",
+      "Do reserve Signal Green / Alarm Red / Scanning Amber exclusively for the access verdict and the load meter.",
+      "Do make the verdict the loudest thing on screen — display scale, flat bold block.",
+      "Do tint every 'gray' from the violet hue (Mist), never a neutral gray.",
+      "Do draw the mark and all decorative marks as vector constructions; keep the crescent eye readable.",
+      "Do letter-space brand lockups and keep all strings 7-bit ASCII.",
+      "Do color the FPS badge violet on NPU / mist on CPU so the backend is legible at a glance."
+    ],
+    "donts": [
+      "Don't let indigo or violet touch the verdict, or let green/red/amber become decorative chrome.",
+      "Don't use a neutral gray anywhere.",
+      "Don't put a drop shadow on anything; depth is tonal plus the one legibility halo.",
+      "Don't use rounded-rectangle cards — chrome is sharp-cornered; only the brand curves are round.",
+      "Don't let the wave field compete with the mark or the verdict — it stays thin and behind.",
+      "Don't emit any Unicode glyph in a Hershey string (dots, arrows, bullets render as ?).",
+      "Don't drift toward a generic dark-dashboard look — gray panels, flat default charts, untinted type."
+    ]
+  }
+}
