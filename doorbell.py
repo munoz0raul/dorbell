@@ -748,6 +748,55 @@ GREEN, RED, AMBER, PURPLE, WHITE, DIM, DARK = (
 FONT      = cv2.FONT_HERSHEY_SIMPLEX
 FONT_MONO = cv2.FONT_HERSHEY_PLAIN
 
+
+def _detect_platform() -> str:
+    """Build the demo title — the live Board + OS this binary is running on —
+    read from the filesystem so the SAME file self-labels across configs:
+    IQ8 + Ubuntu, IQ8 + QLI, Ventuno Q + Ubuntu. ASCII-only (Hershey), joined
+    with ' + ' (never a Unicode dot).
+
+    Board: /proc/device-tree/model (falls back to /sys/devices/soc0/machine).
+    OS:    /etc/os-release (NAME + VERSION_ID; QLI/Qualcomm Linux recognized).
+    """
+    board = ""
+    try:
+        with open("/proc/device-tree/model", "rb") as f:
+            board = f.read().decode("ascii", "ignore").replace("\x00", "").strip()
+    except Exception:
+        board = ""
+    if not board:
+        try:
+            board = open("/sys/devices/soc0/machine").read().strip()
+        except Exception:
+            board = ""
+    # Trim the vendor prefix and noise tokens so the title stays short.
+    board = re.sub(r'^\s*Qualcomm Technologies,?\s*Inc\.?\s*', '', board, flags=re.I)
+    board = re.sub(r'\bSKU\b', '', board, flags=re.I)
+    board = re.sub(r'\s+', ' ', board).strip() or "Unknown Board"
+
+    os_name = ""
+    try:
+        kv = {}
+        for line in open("/etc/os-release"):
+            if "=" in line:
+                k, v = line.rstrip().split("=", 1)
+                kv[k] = v.strip().strip('"')
+        blob = (kv.get("ID", "") + kv.get("NAME", "") + kv.get("PRETTY_NAME", "")).lower()
+        if re.search(r'qli|qcom|qualcomm', blob):
+            ver = kv.get("VERSION_ID", "") or kv.get("BUILD_ID", "")
+            os_name = ("QLI " + ver).strip()
+        else:
+            os_name = (kv.get("NAME", "") + " " + kv.get("VERSION_ID", "")).strip()
+    except Exception:
+        os_name = ""
+    os_name = os_name or "Unknown OS"
+
+    return f"{board}  +  {os_name}"
+
+
+PLATFORM_LABEL = _detect_platform()
+
+
 # ── Official Dragonwing mark (embedded) ──────────────────────────────────────
 # The real circular dragon-head mark, cropped from assets/Qualcomm-Dragonwing-
 # logo.jpeg and recolored light-on-transparent so it reads on the indigo bar.
@@ -1509,12 +1558,15 @@ def draw_hud(canvas: np.ndarray, state: State, status: str, db_count: int,
     hint = (f"B CPU/NPU   G guest   C clear   [ ] idle {idle_timeout:.0f}s   "
             f"- = store {data_ttl:.0f}s   ESC standby   Q quit")
 
-    # Top bar — state name only; backend/FPS live in the telemetry panel,
-    # and the per-state verdict lives in the status strip, so the top stays clean.
-    cv2.rectangle(canvas, (0, 0), (W, _s(24)), INDIGO_DEEP, -1)
-    cv2.line(canvas, (0, _s(24)), (W, _s(24)), VIOLET_LO, _th(1), cv2.LINE_AA)
-    cv2.putText(canvas, f"{state.name:<13}", (_s(10), _s(17)),
-                FONT_MONO, 1.1 * S, VIOLET_HI, _th(1), cv2.LINE_AA)
+    # Top bar — demo title: the live Board + OS this binary runs on (auto-detected),
+    # so the same file self-labels as IQ8+Ubuntu / IQ8+QLI / Ventuno Q+Ubuntu.
+    # A touch bigger than mono and in the Simplex face so it reads as a title, not
+    # a state name. Backend/FPS live in the telemetry panel; the per-state verdict
+    # lives in the status strip, so the top stays clean.
+    cv2.rectangle(canvas, (0, 0), (W, _s(28)), INDIGO_DEEP, -1)
+    cv2.line(canvas, (0, _s(28)), (W, _s(28)), VIOLET_LO, _th(1), cv2.LINE_AA)
+    cv2.putText(canvas, PLATFORM_LABEL, (_s(12), _s(20)),
+                FONT, 0.56 * S, INK, _th(1), cv2.LINE_AA)
 
     # Bottom hint bar
     cv2.rectangle(canvas, (0, H - _s(22)), (W, H), INDIGO_DEEP, -1)
@@ -1714,15 +1766,25 @@ def main():
     inf_frame_cache: Optional[np.ndarray] = None
     verdict_since = {"state": None, "at": 0.0}   # pulse clock for the access banner
 
-    cv2.namedWindow("Dragonwing Doorbell", cv2.WINDOW_NORMAL)
-    # Fill the HDMI panel: size the window to the native canvas, then force
-    # fullscreen so the compositor never leaves a maximized-but-windowed gap.
+    # Fill the HDMI panel. This board's OpenCV uses the Qt5 HighGUI backend,
+    # which by default (WINDOW_GUI_EXPANDED) wraps the image in a toolbar with
+    # pan/zoom buttons AND makes WND_PROP_FULLSCREEN unreliable. Creating the
+    # window with WINDOW_GUI_NORMAL drops that toolbar and lets Qt's own
+    # showFullScreen() take effect. A fullscreen request made *before* the
+    # window is mapped is dropped, so we map first (one imshow + waitKey pumps
+    # the Qt event loop and realizes it), then assert fullscreen, and re-assert
+    # once more on the first loop iteration below as a safety net.
+    _gui_normal = getattr(cv2, "WINDOW_GUI_NORMAL", 0x10)
+    cv2.namedWindow("Dragonwing Doorbell", cv2.WINDOW_NORMAL | _gui_normal)
     cv2.resizeWindow("Dragonwing Doorbell", W, H)
     cv2.moveWindow("Dragonwing Doorbell", 0, 0)
+    cv2.imshow("Dragonwing Doorbell", canvas)   # map it
+    cv2.waitKey(1)                              # pump the compositor
     cv2.setWindowProperty("Dragonwing Doorbell", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    _fs_frames = 0                              # re-assert over the first frames in the loop
 
     print("=== DRAGONWING DOORBELL ===")
-    print("B=toggle CPU/NPU  K=known  U=unknown  R=enroll  ESC=standby  Q=quit")
+    print("B=CPU/NPU  G=guest  C=clear  [ ]=idle  - ==store  ESC=standby  Q=quit")
     print("===========================")
 
     while True:
@@ -1847,6 +1909,11 @@ def main():
                          active_backend=active["backend"],
                          npu_ready=_ready["npu"])
         cv2.imshow("Dragonwing Doorbell", canvas)
+        if _fs_frames < 10:
+            # Mutter can take a few frames to honor the request; re-assert fullscreen
+            # over the first ~10 frames so it reliably sticks, then stop.
+            cv2.setWindowProperty("Dragonwing Doorbell", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            _fs_frames += 1
 
         key = cv2.waitKey(33) & 0xFF
 
