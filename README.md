@@ -19,7 +19,9 @@ runs InsightFace detection + recognition on every frame:
 - **Known face** → green **UNLOCKED** banner.
 - **Unknown face** → red **ACCESS DENIED** banner.
 - **Show a LinkedIn QR code** → the person is authorized and the app captures ~10 frames to
-  **enroll** their face into an in-memory database with a **2-minute TTL** (Time To Live).
+  **enroll** their face under their LinkedIn username, into an in-memory database with a TTL
+  (Time To Live) that defaults to 2 minutes. *Any* QR code in frame is read, but only a LinkedIn
+  profile QR authorizes; the TTL and the idle timeout are both adjustable live from the keyboard.
 
 Press **B** at any time to switch the inference backend between **CPU** (onnxruntime) and
 **NPU** (HTP v75 via `qnn-net-run`) live, and watch the FPS (Frames Per Second) and per-core
@@ -149,12 +151,16 @@ session (`DISPLAY=:0`), so you can launch it from a terminal and it appears on t
 | Key | Action |
 |-----|--------|
 | **B** | Toggle CPU ↔ NPU backend live |
-| **K** | Force a "known face" result (demo) |
-| **U** | Force an "unknown face" result (demo) |
-| **R** | Start enrollment manually (fallback for the QR trigger) |
+| **G** | Authorize a **guest** — runs the same flow as a QR scan with a random name, no QR needed |
+| **C** | Clear the enrolled-face database |
+| **[** / **]** | Decrease / increase the **idle timeout** (seconds of no face before returning to Standby) — 5–60 s in 5 s steps |
+| **-** / **=** | Decrease / increase how long **enrolled data is stored** (the face-DB TTL) — 60–600 s in 60 s steps |
 | **ESC** | Return to Standby |
 | **Q** | Quit |
-| *QR code* | Showing a LinkedIn QR code triggers authorization + enrollment automatically |
+| *QR code* | **Any** QR code in frame is read, but only a **LinkedIn** profile QR authorizes — enrollment then starts automatically under the LinkedIn username |
+
+The current idle-timeout and data-store values are shown live in the bottom hint bar, so you can
+adjust them with `[`/`]` and `-`/`=` and see the effect without leaving the demo.
 
 ### 2.6 — Keep the display awake (demo boards)
 
@@ -229,15 +235,17 @@ main loop        state machine + Dragonwing rendering + key handling
 ```
 
 **State machine:** `LOADING → STANDBY → DETECTION → {RECOGNIZED | UNKNOWN}`, with
-`QR_AUTHORIZED → REGISTRATION` branching off on a QR trigger, and a 5-second no-face timeout
-returning to Standby.
+`QR_AUTHORIZED → REGISTRATION` branching off on a QR trigger, and a no-face timeout (default
+5 s, adjustable live with `[`/`]`) returning to Standby.
 
 ### Why the NPU engine batches
 
 `qnn-net-run` is a CLI invoked per call, and each call carries a fixed ~270–305 ms cost
 (FastRPC setup + model load). Calling it per frame would cap throughput near 3 FPS. Instead
-`NpuFaceEngine` accumulates up to **16 frames** (or 0.35 s) and runs the batch in **one**
-`qnn-net-run` call, amortizing the fixed cost across the batch and reaching ~15 FPS live.
+`NpuFaceEngine` accumulates up to **16 frames** (or 0.10 s) and runs the batch in **one**
+`qnn-net-run` call, amortizing the fixed cost across the batch. The 0.10 s flush keeps the
+on-screen overlay tracking the live face closely (a longer window raises FPS but makes the
+bounding box visibly trail a moving face).
 
 ### CPU vs NPU (measured on QCS8275, `benchmark.py`)
 
@@ -278,7 +286,7 @@ assets/                Dragonwing brand references + sample LinkedIn QR
 | `libQnnHtp.so: cannot open shared object file` | Use the correct path: `/usr/lib/libQnnHtp.so` (not `/usr/lib/aarch64-linux-gnu/`). Find it with `find /usr -name libQnnHtp.so`. |
 | NPU "context binaries missing" at startup | `~/qnn_context/det_500m_qcs8275.bin` / `w600k_mbf_qcs8275.bin` not present — run `qnn-context-binary-generator` (§2.3). |
 | Window never appears over SSH | The app sets `DISPLAY=:0` and discovers the GNOME Xwayland auth from `/run/user/1000/.mutter-Xwaylandauth.*`. Make sure you're logged into the desktop session on the board. |
-| No camera / black feed | Check `v4l2-ctl --list-devices`; the app falls back to synthetic frames when `/dev/video0` can't be opened. |
+| No camera / black feed | Check `v4l2-ctl --list-devices`; the app probes `/dev/video0`–`video5` and uses the first that yields a frame, falling back to synthetic frames if none work. (A USB camera that re-enumerates to a new index after replug is handled automatically.) |
 | NPU backend seems to use the CPU | The Python QNNExecutionProvider silently falls back to CPU on this board — that's why the NPU path uses `qnn-net-run`, not ORT. If FPS and CPU load look identical to CPU mode, confirm you launched with `--backend npu` and the context binaries exist. |
 | `QAI_HUB_TOKEN is not set` | Export your AI Hub token before `aihub_compile.py` (see `.env.example`), or run `qai-hub configure --api_token ...` once. |
 | Keyboard keys do nothing | Click the full-screen window first so OpenCV's highgui receives focus. |
