@@ -7,13 +7,13 @@ Stage 2 target: IQ8 + Ubuntu 24.04 + USB webcam + HDMI display.
   - V4L2 camera capture, synthetic-frame fallback when no camera is present
   - Dual inference backends, switchable live:
       CPU  — InsightFace / onnxruntime (CPUExecutionProvider)
-      NPU  — HTP v75 via qnn-net-run batch engine (the only working NPU path on this board)
+      NPU  — HTP v75 via qai_appbuilder in-process QNN contexts (det + rec on HTP)
   - Auto-discovers Xwayland auth from the running GNOME session
   - Dragonwing-branded full-screen UI drawn on an OpenCV canvas
 
 Usage:
   python3 doorbell.py                  # CPU backend
-  python3 doorbell.py --backend npu    # NPU (HTP v75) via qnn-net-run batch engine
+  python3 doorbell.py --backend npu    # NPU (HTP v75) via qai_appbuilder in-process QNN
 
 Controls (click the window first):
   B      — toggle CPU / NPU backend live
@@ -41,9 +41,6 @@ import os
 import glob
 import argparse
 import collections
-import subprocess
-import tempfile
-import shutil
 from enum import Enum, auto
 from dataclasses import dataclass, field
 from typing import Optional, List
@@ -168,103 +165,62 @@ def _rec_preprocess(bgr: np.ndarray) -> np.ndarray:
 
 
 
-QNN_BACKEND  = "/usr/lib/libQnnHtp.so"
 DET_CTX_PATH = os.path.join(CTX_DIR, "det_500m_qcs8275.bin")
 REC_CTX_PATH = os.path.join(CTX_DIR, "w600k_mbf_qcs8275.bin")
 
-# Det output tensor shapes (float32 element counts):
-#   outputs 0-2: scores  (3200, 800, 200)
-#   outputs 3-5: boxes×4 (12800, 3200, 800)
-#   outputs 6-8: kps×10  (32000, 8000, 2000)
-_DET_OUT_SHAPES = [
-    (3200, 1), (800, 1), (200, 1),
-    (3200, 4), (800, 4), (200, 4),
-    (3200, 10), (800, 10), (200, 10),
-]
-_REC_EMB_SIZE = 512   # w600k_mbf output: 1×512
+# QNN (Qualcomm Neural Network) runtime libraries. qai_appbuilder bundles a
+# matching set under its package libs/ and resolves them automatically, so we
+# let QNNConfig.Config() pick those (proven to drive this board's HTP v75). The
+# board's own /usr/lib set is left as documentation of the on-device SDK.
+QNN_BACKEND_LIB = "/usr/lib/libQnnHtp.so"
 
-
-def _qnn_run_batch(ctx_bin: str, inp_raws: list, out_dir: str, tmpdir: str) -> bool:
-    """
-    Write input_list.txt for inp_raws, run qnn-net-run, return True on success.
-    Outputs land in out_dir/Result_0/ .. Result_{N-1}/.
-    """
-    model_tag = "det" if "det" in ctx_bin else "rec"
-    list_path = os.path.join(tmpdir, f"list_{model_tag}.txt")
-    with open(list_path, "w") as f:
-        for p in inp_raws:
-            f.write(p + "\n")
-    cmd = [
-        "qnn-net-run",
-        f"--backend={QNN_BACKEND}",
-        f"--retrieve_context={ctx_bin}",
-        f"--input_list={list_path}",
-        f"--output_dir={out_dir}",
-        "--perf_profile=burst",
-        "--log_level=error",
-    ]
-    try:
-        r = subprocess.run(cmd, capture_output=True, timeout=30)
-        return r.returncode == 0
-    except Exception as e:
-        print(f"[QNN] qnn-net-run failed: {e}")
-        return False
-
-
-def _read_det_outputs(result_dir: str):
-    """Read 9 output tensors from Result_N/ and return list of np arrays."""
-    outs = []
-    for i, shape in enumerate(_DET_OUT_SHAPES):
-        path = os.path.join(result_dir, f"output_{i}.raw")
-        arr = np.fromfile(path, dtype=np.float32).reshape(shape)
-        outs.append(arr)
-    return outs
-
-
-def _read_rec_output(result_dir: str) -> np.ndarray:
-    path = os.path.join(result_dir, "output_0.raw")
-    return np.fromfile(path, dtype=np.float32)   # shape (512,)
+# det (det_500m) emits 9 output tensors in this order; _det_postprocess reshapes
+# each one itself, so we only rely on the ORDER here (scores×3, boxes×3, kps×3).
+# rec (w600k_mbf) emits a single 512-d embedding.
+_DET_NUM_OUTPUTS = 9
+_REC_EMB_SIZE    = 512
 
 
 class NpuFaceEngine(threading.Thread):
     """
-    Real HTP (Hexagon Tensor Processor) NPU engine using qnn-net-run CLI.
+    Real HTP (Hexagon Tensor Processor) NPU engine — in-process via qai_appbuilder.
 
-    Design: queue-based batch inference.
-    - Main thread calls submit(frame) — frames accumulate in a deque (up to MAX_BATCH).
-    - Background thread waits until MAX_BATCH frames queued OR BATCH_TIMEOUT seconds
-      elapses, then calls qnn-net-run once for the whole batch.
+    The det/rec QNN context binaries (det_500m_qcs8275.bin, w600k_mbf_qcs8275.bin)
+    are loaded ONCE into the HTP through qai_appbuilder.QNNContext and then driven
+    with direct .Inference() calls — no per-frame subprocess, no file round-trip.
 
-    Timing breakdown (measured on QCS8275):
-      Fixed spawn overhead:  ~270ms  (FastRPC + model load, per qnn-net-run call)
-      Per-inference HTP cost: ~11ms det / ~4ms rec
-      With batch=16: 270ms + 16×11ms = 446ms det → 28ms/frame → ~36 FPS det
-      Full pipeline (det+rec): ~(270+16×11) + (270+1×4) ≈ 716ms/16 frames → ~22 FPS
+    This replaces the earlier qnn-net-run CLI engine, which paid a fixed ~280ms
+    FastRPC+model-load cost on EVERY call and so had to batch 16 frames behind a
+    0.10s window just to stay usable — the batch window being the dominant source
+    of the overlay lag (box/dots trailing a moving face).
 
-    CPU usage when active: ~5-10% (process blocked in subprocess.run kernel wait)
-    vs CPU engine: ~95% (ORT spreads work across all 8 cores).
+    Timing (measured on QCS8275, in-process):
+      One-time load:  det ~185ms + rec ~15ms  (at startup, off the hot path)
+      Per-frame HTP:  det ~2ms + rec ~1.3ms   (vs ~280ms spawn each before)
+
+    With the spawn gone, batching has no purpose: we run latest-frame-wins exactly
+    like the CPU FaceEngine, so the overlay tracks the live face with ~3ms of
+    inference latency instead of a ~560ms batch stall.
+
+    CPU usage when active stays low (~5-10%): the process blocks waiting on the HTP
+    rather than spreading work across all 8 cores like the ORT CPU path (~95%).
     """
-    MAX_BATCH     = 16
-    BATCH_TIMEOUT = 0.10    # seconds — collect frames for up to this long, then run.
-                            # Kept short on purpose: this wait is the dominant source of
-                            # overlay lag (the box/dots trailing the moving face). Smaller
-                            # batches cost a little throughput (each ~280ms qnn-net-run spawn
-                            # processes fewer frames) but the overlay tracks far more tightly.
 
     def __init__(self, on_ready):
         super().__init__(daemon=True)
-        self._queue: collections.deque = collections.deque(maxlen=self.MAX_BATCH)
-        self._queue_lock = threading.Lock()
+        self._pending: Optional[np.ndarray] = None
+        self._pending_lock = threading.Lock()
         self._faces: list = []
         self._faces_lock = threading.Lock()
         self.running = True
         self.on_ready = on_ready
         self.fps_counter = FpsCounter(window=30)
-        self._tmpdir: Optional[str] = None
+        self._det = None
+        self._rec = None
 
     def submit(self, frame: np.ndarray):
-        with self._queue_lock:
-            self._queue.append(frame.copy())
+        with self._pending_lock:
+            self._pending = frame  # always keep latest, drop older
 
     def get_faces(self) -> list:
         with self._faces_lock:
@@ -272,99 +228,49 @@ class NpuFaceEngine(threading.Thread):
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
-    def _infer_det_batch(self, frames: list) -> list:
-        """Run det model on a list of frames, return list of raw_face lists."""
-        det_work = os.path.join(self._tmpdir, "det_work")
-        if os.path.exists(det_work):
-            shutil.rmtree(det_work)
-        os.makedirs(det_work)
-
-        inp_paths = []
-        for i, f in enumerate(frames):
-            pre = _det_preprocess(f)
-            p = os.path.join(self._tmpdir, f"det_in_{i}.raw")
-            pre.tofile(p)
-            inp_paths.append(p)
-
-        ok = _qnn_run_batch(DET_CTX_PATH, inp_paths, det_work, self._tmpdir)
-        if not ok:
-            return [[] for _ in frames]
-
-        results = []
-        for i, f in enumerate(frames):
-            h, w = f.shape[:2]
-            result_dir = os.path.join(det_work, f"Result_{i}")
-            try:
-                outs = _read_det_outputs(result_dir)
-                results.append(_det_postprocess(outs, h, w))
-            except Exception as e:
-                print(f"[QNN] det read error for frame {i}: {e}")
-                results.append([])
-        return results
-
-    def _infer_rec_batch(self, crops: list) -> list:
-        """Run rec model on a list of 112×112 crops, return list of embedding arrays."""
-        if not crops:
+    def _infer_det(self, frame: np.ndarray) -> list:
+        """Run det on one frame; return raw_face dicts (bbox/kps/score)."""
+        h, w = frame.shape[:2]
+        pre = _det_preprocess(frame)
+        try:
+            outs = self._det.Inference([pre])   # list of 9 flat float32 arrays
+        except Exception as e:
+            print(f"[NPU] det inference error: {e}")
             return []
-        rec_work = os.path.join(self._tmpdir, "rec_work")
-        if os.path.exists(rec_work):
-            shutil.rmtree(rec_work)
-        os.makedirs(rec_work)
+        if not isinstance(outs, (list, tuple)) or len(outs) < _DET_NUM_OUTPUTS:
+            return []
+        try:
+            return _det_postprocess(outs, h, w)
+        except Exception as e:
+            print(f"[NPU] det postprocess error: {e}")
+            return []
 
-        inp_paths = []
-        for i, crop in enumerate(crops):
-            pre = _rec_preprocess(crop)
-            p = os.path.join(self._tmpdir, f"rec_in_{i}.raw")
-            pre.tofile(p)
-            inp_paths.append(p)
+    def _infer_rec(self, crop: np.ndarray) -> Optional[np.ndarray]:
+        """Run rec on one 112-aligned crop; return L2-normalized embedding."""
+        pre = _rec_preprocess(crop)
+        try:
+            out = self._rec.Inference([pre])
+        except Exception as e:
+            print(f"[NPU] rec inference error: {e}")
+            return None
+        emb = out[0] if isinstance(out, (list, tuple)) else out
+        emb = np.asarray(emb, dtype=np.float32).reshape(-1)
+        norm = np.linalg.norm(emb)
+        return emb / norm if norm > 1e-6 else emb
 
-        ok = _qnn_run_batch(REC_CTX_PATH, inp_paths, rec_work, self._tmpdir)
-        if not ok:
-            return [None] * len(crops)
+    def _process_frame(self, frame: np.ndarray):
+        """Full det→crop→rec pipeline for one frame; updates self._faces."""
+        h, w = frame.shape[:2]
+        raw_faces = self._infer_det(frame)
 
-        embeddings = []
-        for i in range(len(crops)):
-            result_dir = os.path.join(rec_work, f"Result_{i}")
-            try:
-                emb = _read_rec_output(result_dir)
-                norm = np.linalg.norm(emb)
-                embeddings.append(emb / norm if norm > 1e-6 else emb)
-            except Exception as e:
-                print(f"[QNN] rec read error for crop {i}: {e}")
-                embeddings.append(None)
-        return embeddings
-
-    def _process_batch(self, frames: list):
-        """Full pipeline for a batch of frames; updates self._faces with latest."""
-        if not frames:
-            return
-
-        t_batch_start = time.perf_counter()
-
-        # Detection pass — one qnn-net-run call for the whole batch
-        raw_faces_list = self._infer_det_batch(frames)
-
-        # Gather rec crops from the *latest* frame (last in batch)
-        latest_idx = len(frames) - 1
-        latest_frame = frames[latest_idx]
-        h, w = latest_frame.shape[:2]
-        raw_faces = raw_faces_list[latest_idx]
-
-        crops = []
-        valid_fds = []
+        result_faces = []
         for fd in raw_faces:
             x1, y1, x2, y2 = fd['bbox']
             x1, y1 = max(0, int(x1)), max(0, int(y1))
             x2, y2 = min(w, int(x2)), min(h, int(y2))
-            if x2 > x1 and y2 > y1:
-                crops.append(latest_frame[y1:y2, x1:x2])
-                valid_fds.append(fd)
-
-        # Recognition pass — batch all crops in one qnn-net-run call
-        embeddings = self._infer_rec_batch(crops)
-
-        result_faces = []
-        for fd, emb in zip(valid_fds, embeddings):
+            if x2 <= x1 or y2 <= y1:
+                continue
+            emb = self._infer_rec(frame[y1:y2, x1:x2])
             if emb is None:
                 continue
             face = type('Face', (), {
@@ -376,14 +282,7 @@ class NpuFaceEngine(threading.Thread):
 
         with self._faces_lock:
             self._faces = result_faces
-
-        # Spread FPS ticks evenly across the real batch wall-clock duration
-        # so the rolling FpsCounter shows actual throughput, not a burst spike.
-        t_now = time.perf_counter()
-        batch_dur = max(t_now - t_batch_start, 1e-6)
-        n = len(frames)
-        for i in range(n):
-            self.fps_counter._times.append(t_batch_start + batch_dur * i / n)
+        self.fps_counter.tick()
 
     # ── thread entry ─────────────────────────────────────────────────────────
 
@@ -397,37 +296,51 @@ class NpuFaceEngine(threading.Thread):
             self.on_ready()
             return
 
-        self._tmpdir = tempfile.mkdtemp(prefix="qnn_doorbell_")
-        print(f"[NPU] qnn-net-run engine ready  tmpdir={self._tmpdir}")
+        try:
+            from qai_appbuilder import (QNNContext, QNNConfig, Runtime,
+                                        PerfProfile, ProfilingLevel, LogLevel)
+        except Exception as e:
+            print(f"[NPU] ERROR: qai_appbuilder import failed: {e}")
+            print(f"  pip3 install --break-system-packages qai-appbuilder")
+            self.on_ready()
+            return
+
+        try:
+            # Config() resolves the bundled QNN libs and points ADSP_LIBRARY_PATH
+            # at the matching HTP skels — proven to drive this board's HTP v75.
+            QNNConfig.Config(Runtime.HTP, LogLevel.ERROR, ProfilingLevel.OFF)
+            t0 = time.perf_counter()
+            self._det = QNNContext("det", DET_CTX_PATH)
+            self._rec = QNNContext("rec", REC_CTX_PATH)
+            PerfProfile.SetPerfProfileGlobal(PerfProfile.BURST)
+            load_ms = (time.perf_counter() - t0) * 1000
+        except Exception as e:
+            print(f"[NPU] ERROR: failed to load HTP contexts: {e}")
+            self.on_ready()
+            return
+
+        print(f"[NPU] in-process HTP engine ready  (load {load_ms:.0f}ms)")
         print(f"[NPU] det_ctx={DET_CTX_PATH}")
         print(f"[NPU] rec_ctx={REC_CTX_PATH}")
         self.on_ready()
 
-        batch_start = time.perf_counter()
-
         while self.running:
-            with self._queue_lock:
-                queue_len = len(self._queue)
-
-            elapsed = time.perf_counter() - batch_start
-            batch_full  = queue_len >= self.MAX_BATCH
-            timeout_hit = elapsed >= self.BATCH_TIMEOUT and queue_len > 0
-            idle        = elapsed >= self.BATCH_TIMEOUT and queue_len == 0
-
-            if batch_full or timeout_hit:
-                with self._queue_lock:
-                    batch = list(self._queue)
-                    self._queue.clear()
-                self._process_batch(batch)
-                batch_start = time.perf_counter()
-            elif idle:
-                batch_start = time.perf_counter()
-                time.sleep(0.01)
+            with self._pending_lock:
+                frame = self._pending
+                self._pending = None
+            if frame is not None:
+                self._process_frame(frame)
             else:
-                time.sleep(0.010)
+                time.sleep(0.005)
 
-        if self._tmpdir and os.path.exists(self._tmpdir):
-            shutil.rmtree(self._tmpdir, ignore_errors=True)
+        # Release HTP contexts deterministically on shutdown.
+        try:
+            if self._det is not None:
+                self._det.release()
+            if self._rec is not None:
+                self._rec.release()
+        except Exception:
+            pass
 
     def stop(self):
         self.running = False
@@ -1737,7 +1650,7 @@ def main():
             if app.state == State.LOADING:
                 app.state = State.STANDBY
                 app.status_msg = "SYSTEM READY"
-        print("[NPU] qnn-net-run batch engine ready")
+        print("[NPU] in-process HTP engine ready")
 
     cpu_engine = FaceEngine(on_ready=on_cpu_ready)
     npu_engine = NpuFaceEngine(on_ready=on_npu_ready)
@@ -1758,7 +1671,7 @@ def main():
             app.state = State.RECOGNIZED
             app.last_match = name
             app.status_msg = f"Registered! Welcome, {name}"
-        print(f"[REG] Done — {name} added with {len(embeddings)} embeddings (TTL 120s)")
+        print(f"[REG] Done — {name} added with {len(embeddings)} embeddings (TTL {app.data_ttl:.0f}s)")
 
     canvas = np.zeros((H, W, 3), dtype=np.uint8)
     t0 = time.time()

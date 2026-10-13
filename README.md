@@ -24,8 +24,8 @@ runs InsightFace detection + recognition on every frame:
   profile QR authorizes; the TTL and the idle timeout are both adjustable live from the keyboard.
 
 Press **B** at any time to switch the inference backend between **CPU** (onnxruntime) and
-**NPU** (HTP v75 via `qnn-net-run`) live, and watch the FPS (Frames Per Second) and per-core
-CPU load change in the telemetry panel. That side-by-side is the whole point of the demo:
+**NPU** (HTP v75, in-process via `qai-appbuilder`) live, and watch the FPS (Frames Per Second) and
+per-core CPU load change in the telemetry panel. That side-by-side is the whole point of the demo:
 the same recognition pipeline, same models, offloaded to the NPU.
 
 | State | Screen |
@@ -78,7 +78,8 @@ systemd service so the board behaves like a finished appliance. *Full walkthroug
 **Accounts / SDKs**
 - A [Qualcomm AI Hub](https://aihub.qualcomm.com) account + API token (for model conversion)
 - QAIRT 2.46.0 runtime present on the board (ships `qnn-net-run`, `qnn-context-binary-generator`,
-  `libQnnHtp.so`)
+  `libQnnHtp.so`) — used to *build* the HTP context binaries (§2.3)
+- `qai-appbuilder` (pip) for the NPU runtime — loads those binaries in-process (§2.2.1)
 
 ### 2.1 — Flash Ubuntu 24.04 to the board
 
@@ -97,6 +98,9 @@ sudo apt install -y python3-pip python3-opencv libgl1 v4l-utils
 
 pip3 install --upgrade pip
 pip3 install insightface onnxruntime numpy psutil opencv-python
+
+# NPU backend only — in-process QNN runtime for the HTP v75 (see 2.2.1):
+pip3 install --break-system-packages qai-appbuilder
 ```
 
 | Package | Why |
@@ -107,9 +111,29 @@ pip3 install insightface onnxruntime numpy psutil opencv-python
 | `numpy` | preprocessing, embedding math |
 | `psutil` | per-core CPU + RAM telemetry panel |
 | `v4l-utils` | verify the USB camera (`v4l2-ctl --list-devices`) |
+| `qai-appbuilder` | **NPU backend** — loads the HTP context binaries *in-process* and runs inference without spawning `qnn-net-run` per frame |
 
-The **NPU** backend additionally needs the QAIRT runtime on the `PATH` (`qnn-net-run`), which the
-Dragonwing image provides. The host-side model conversion needs `qai-hub` (`pip3 install qai-hub`).
+#### 2.2.1 — The NPU backend runs in-process (`qai-appbuilder`)
+
+The NPU path loads the two compiled HTP (Hexagon Tensor Processor) context binaries **once** via
+[`qai-appbuilder`](https://pypi.org/project/qai-appbuilder/) (`QNNContext`) and then calls
+`.Inference()` directly on the HTP v75 — **no per-frame subprocess, no temp-file round-trip.** This is
+the engine that makes the on-screen box track the live face in real time (~5 ms/frame instead of a
+~0.5 s batch stall — see [Why the NPU engine runs in-process](#why-the-npu-engine-runs-in-process)).
+
+- `qai-appbuilder` ships its **own** matching QNN (Qualcomm Neural Network) runtime libraries and HTP
+  skels under its package `libs/`, and points `ADSP_LIBRARY_PATH` at them automatically — you do **not**
+  need to set `QNN_SDK_ROOT` or copy skels by hand.
+- Ubuntu 24.04 is a PEP 668 "externally-managed" environment, so `--break-system-packages` is required
+  to install into the same site-packages the app uses (matching how `insightface`/`onnxruntime` were
+  installed above).
+- It consumes the **exact same `~/qnn_context/*.bin`** files the old `qnn-net-run` path used — **no model
+  re-conversion.** The output is bit-for-bit identical to the CLI path (verified: all detector output
+  tensors match exactly), so boxes, the 5 landmarks, and embeddings are unchanged.
+
+The QAIRT (Qualcomm AI Runtime SDK) CLI tools (`qnn-net-run`, `qnn-context-binary-generator`) are still
+required on the board **for building** the context binaries in §2.3; they're just no longer on the
+runtime hot path. The host-side model conversion needs `qai-hub` (`pip3 install qai-hub`).
 
 ### 2.3 — Prepare the models
 
@@ -228,7 +252,7 @@ inference, telemetry, and the UI never block each other:
 ```
 CameraThread     V4L2 capture (synthetic frames if no camera), always-latest frame
 FaceEngine       CPU backend — InsightFace / onnxruntime, latest-frame-wins
-NpuFaceEngine    NPU backend — batches frames, one qnn-net-run call per batch
+NpuFaceEngine    NPU backend — HTP v75 via qai-appbuilder, in-process, latest-frame-wins
 StatsMonitor     psutil per-core CPU % + RAM, polled every 0.5s
 RegistrationDriver  captures N embeddings during enrollment
 main loop        state machine + Dragonwing rendering + key handling
@@ -238,25 +262,34 @@ main loop        state machine + Dragonwing rendering + key handling
 `QR_AUTHORIZED → REGISTRATION` branching off on a QR trigger, and a no-face timeout (default
 5 s, adjustable live with `[`/`]`) returning to Standby.
 
-### Why the NPU engine batches
+### Why the NPU engine runs in-process
 
-`qnn-net-run` is a CLI invoked per call, and each call carries a fixed ~270–305 ms cost
-(FastRPC setup + model load). Calling it per frame would cap throughput near 3 FPS. Instead
-`NpuFaceEngine` accumulates up to **16 frames** (or 0.10 s) and runs the batch in **one**
-`qnn-net-run` call, amortizing the fixed cost across the batch. The 0.10 s flush keeps the
-on-screen overlay tracking the live face closely (a longer window raises FPS but makes the
-bounding box visibly trail a moving face).
+The HTP (Hexagon Tensor Processor) itself is extremely fast (det ~2 ms, rec ~1.3 ms per frame).
+The challenge was *how you invoke it*. The original engine shelled out to the `qnn-net-run` CLI,
+and each spawn carries a fixed **~270–305 ms** cost (FastRPC setup + model reload, *every call*).
+To stay usable, that engine had to batch 16 frames behind a 0.10 s window and amortize one spawn
+across the batch — but the batch window was itself the dominant source of overlay lag, making the
+box and landmarks visibly trail a moving face.
+
+`NpuFaceEngine` now loads both context binaries **once** at startup through `qai-appbuilder`
+(`QNNContext`) and calls `.Inference()` directly on the HTP — no subprocess, no file round-trip.
+With the spawn cost gone, batching has no purpose, so the engine runs **latest-frame-wins**, exactly
+like the CPU path. Per-frame latency drops from a ~0.5 s batch stall to **~5 ms**, and the overlay
+tracks the live face in real time. The output is **bit-for-bit identical** to the old CLI path
+(verified: every detector output tensor matches exactly), so boxes, the 5 landmarks, and recognition
+embeddings are unchanged — only the latency is different.
 
 ### CPU vs NPU (measured on QCS8275, `benchmark.py`)
 
-| Model | CPU (onnxruntime) | NPU (HTP v75) | Speedup |
-|-------|-------------------|---------------|---------|
-| Detection (`det_500m`, 320×320) | ~47 ms | ~11 ms | ~4× |
-| Recognition (`w600k_mbf`, 112×112) | ~91 ms | ~5 ms | ~18× |
+| Model | CPU (onnxruntime) | NPU (HTP v75, in-process) | Speedup |
+|-------|-------------------|---------------------------|---------|
+| Detection (`det_500m`, 320×320) | ~47 ms | ~2 ms | ~20× |
+| Recognition (`w600k_mbf`, 112×112) | ~91 ms | ~1.3 ms | ~70× |
 
-With the NPU active, overall CPU load drops sharply (the process spends most of its time blocked
-waiting on the HTP), versus the CPU backend saturating all cores. The telemetry panel shows this
-live.
+The NPU context binaries load once at startup (~0.2–0.3 s total) and then stay resident on the HTP, so
+these are the steady-state per-frame costs. Because inference no longer blocks on a subprocess, the
+main loop runs at full frame rate on the NPU path; the telemetry panel shows the FPS jump and the
+per-core load live when you toggle with **B**.
 
 ---
 
@@ -284,10 +317,12 @@ assets/                Dragonwing brand references + sample LinkedIn QR
 | Symptom | Cause / fix |
 |---------|-------------|
 | `libQnnHtp.so: cannot open shared object file` | Use the correct path: `/usr/lib/libQnnHtp.so` (not `/usr/lib/aarch64-linux-gnu/`). Find it with `find /usr -name libQnnHtp.so`. |
+| `No module named 'qai_appbuilder'` at NPU startup | The in-process NPU runtime isn't installed. `pip3 install --break-system-packages qai-appbuilder` (§2.2.1). The CPU backend still runs without it. |
 | NPU "context binaries missing" at startup | `~/qnn_context/det_500m_qcs8275.bin` / `w600k_mbf_qcs8275.bin` not present — run `qnn-context-binary-generator` (§2.3). |
 | Window never appears over SSH | The app sets `DISPLAY=:0` and discovers the GNOME Xwayland auth from `/run/user/1000/.mutter-Xwaylandauth.*`. Make sure you're logged into the desktop session on the board. |
 | No camera / black feed | Check `v4l2-ctl --list-devices`; the app probes `/dev/video0`–`video5` and uses the first that yields a frame, falling back to synthetic frames if none work. (A USB camera that re-enumerates to a new index after replug is handled automatically.) |
-| NPU backend seems to use the CPU | The Python QNNExecutionProvider silently falls back to CPU on this board — that's why the NPU path uses `qnn-net-run`, not ORT. If FPS and CPU load look identical to CPU mode, confirm you launched with `--backend npu` and the context binaries exist. |
+| NPU backend seems to use the CPU | The Python QNNExecutionProvider silently falls back to CPU on this board — that's why the NPU path drives the HTP in-process via `qai-appbuilder`, not ORT. If FPS and CPU load look identical to CPU mode, confirm you launched with `--backend npu`, that `qai-appbuilder` imports, and the context binaries exist. |
+| NPU mode uses *more* CPU than before | Expected after the in-process switch: the main loop now runs at full frame rate (no 0.5 s batch stall), so per-frame work — QR decode especially — runs ~10× more often. The HTP itself is still doing the inference. |
 | `QAI_HUB_TOKEN is not set` | Export your AI Hub token before `aihub_compile.py` (see `.env.example`), or run `qai-hub configure --api_token ...` once. |
 | Keyboard keys do nothing | Click the full-screen window first so OpenCV's highgui receives focus. |
 | Display blanks / screen turns off mid-demo | GNOME's idle manager blanks the HDMI output (this Xwayland server has no DPMS extension, so `xset -dpms` alone won't help). Disable idle blanking — see **§2.6**. `run_doorbell.sh` already re-asserts these on every launch. |

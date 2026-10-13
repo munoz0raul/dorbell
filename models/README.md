@@ -98,24 +98,45 @@ ls -la ~/qnn_context/*.bin
 # det_500m_qcs8275.bin   w600k_mbf_qcs8275.bin
 ```
 
-The NPU engine in `doorbell.py` runs them via:
+The NPU engine in `doorbell.py` loads these context binaries **in-process** via
+`qai-appbuilder` (`QNNContext`) and runs them with direct `.Inference()` calls on
+the HTP v75 — no `qnn-net-run` subprocess on the runtime path:
 
+```python
+from qai_appbuilder import QNNContext, QNNConfig, Runtime, PerfProfile, LogLevel, ProfilingLevel
+
+QNNConfig.Config(Runtime.HTP, LogLevel.ERROR, ProfilingLevel.OFF)   # bundled QNN libs + HTP skels
+det = QNNContext("det", "~/qnn_context/det_500m_qcs8275.bin")       # loaded once
+PerfProfile.SetPerfProfileGlobal(PerfProfile.BURST)
+outputs = det.Inference([preprocessed_nchw_float32])                # ~2 ms on the HTP
 ```
-qnn-net-run --backend=/usr/lib/libQnnHtp.so \
-            --retrieve_context=~/qnn_context/<model>.bin \
-            --input_list=<batch>.txt --output_dir=<out> \
-            --perf_profile=burst --log_level=error
-```
+
+Install it with `pip3 install --break-system-packages qai-appbuilder` (it bundles the
+matching QNN runtime libraries and HTP skels, so no `QNN_SDK_ROOT` setup is needed).
+
+> The `qnn-net-run` CLI is still used to *build* the context binaries in Step 4 below and is
+> handy for standalone verification, e.g.:
+>
+> ```bash
+> qnn-net-run --backend=/usr/lib/libQnnHtp.so \
+>             --retrieve_context=~/qnn_context/<model>.bin \
+>             --input_list=<batch>.txt --output_dir=<out> \
+>             --perf_profile=burst --log_level=error
+> ```
+>
+> The in-process path produces **bit-for-bit identical** outputs to this CLI (verified across all
+> detector output tensors).
 
 ---
 
 ## Measured performance (QCS8275, from `benchmark.py`)
 
-| Model      | CPU (onnxruntime) | NPU (HTP v75) |
-|------------|-------------------|---------------|
-| Detection  | ~47 ms            | ~11 ms        |
-| Recognition| ~91 ms            | ~5 ms         |
+| Model      | CPU (onnxruntime) | NPU (HTP v75, in-process) |
+|------------|-------------------|---------------------------|
+| Detection  | ~47 ms            | ~2 ms                     |
+| Recognition| ~91 ms            | ~1.3 ms                   |
 
-qnn-net-run carries a fixed ~270–305 ms spawn/model-load cost per call, so the
-NPU engine batches up to 16 frames per `qnn-net-run` invocation to amortize it,
-reaching ~15 FPS end-to-end on live camera input.
+The context binaries load once at startup (~0.2–0.3 s total) and stay resident on the HTP, so these
+are steady-state per-frame costs. The engine runs latest-frame-wins (no batching): with inference
+in-process there's no per-call spawn to amortize, so the overlay tracks the live face in real time
+at full frame rate.
