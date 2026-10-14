@@ -275,6 +275,10 @@ bash container/run_doorbell_container.sh npu
 Full walkthrough, including the CDI/`qai-appbuilder` split and troubleshooting deltas, is in
 [`container/README.md`](container/README.md).
 
+**On Qualcomm Linux (QLI) hosts** the same image runs with a Yocto-specific CDI and wrapper
+(flat `/usr/lib` paths, Weston same-UID display auth, USB cam on a high `/dev/video*` node) —
+see [`container/qli/README.md`](container/qli/README.md).
+
 ---
 
 ## Architecture

@@ -637,10 +637,19 @@ class CameraThread(threading.Thread):
         """
         Open the first V4L2 index that both opens and yields a real frame.
         A USB webcam can re-enumerate across reboots/replugs (e.g. video0 ->
-        video1), so we probe a few indices instead of hardcoding 0 — otherwise
-        a moved camera leaves the app on synthetic frames or a stale handle.
+        video1), so we probe indices instead of hardcoding 0 — otherwise a
+        moved camera leaves the app on synthetic frames or a stale handle.
+
+        We probe the actual /dev/video* nodes present (sorted by index), not a
+        fixed range: on Ubuntu the USB cam is usually video0, but on Qualcomm
+        Linux (QLI) the on-SoC Iris codec + ISP pipelines occupy video0..27 and
+        the USB webcam enumerates high (e.g. /dev/video28). The read() check
+        skips the non-capture ISP/codec nodes, which open but yield no frame.
         """
-        for idx in range(6):
+        nodes = sorted(glob.glob('/dev/video*'),
+                       key=lambda p: int(re.sub(r'\D', '', p) or -1))
+        indices = [int(re.sub(r'\D', '', p)) for p in nodes] or list(range(6))
+        for idx in indices:
             cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
             if cap.isOpened():
                 ok, _ = cap.read()

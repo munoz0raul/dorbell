@@ -17,6 +17,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 # libatomic1 is required by qai-appbuilder's bundled QNN native libs (they link
 # libatomic.so.1, which is NOT in a minimal ubuntu:24.04) — without it the
 # qai_appbuilder import fails and the NPU path silently falls back to CPU.
+# libyaml-0-2 is required on **Qualcomm Linux (QLI/Yocto)** hosts: there the
+# bind-mounted host libcdsprpc.so additionally links libyaml-0.so.2, absent from
+# minimal ubuntu:24.04 — without it the CDI-mounted FastRPC stub fails to load
+# and the NPU falls back to CPU. Harmless on Ubuntu hosts (which don't need it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       python3-pip \
@@ -27,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxext6 \
       libxrender1 \
       libatomic1 \
+      libyaml-0-2 \
       v4l-utils \
       ca-certificates && \
     rm -rf /var/lib/apt/lists/*
