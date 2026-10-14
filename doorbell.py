@@ -27,7 +27,7 @@ Controls (click the window first):
 Auto behaviour:
   Face detected        → Standby becomes Detection, recognition runs each frame
   No face for idle_to  → returns to Standby
-  LinkedIn QR detected → triggers Registration (captures 10 frames, data_ttl TTL)
+  LinkedIn QR detected → triggers Registration (~30 aligned frames over ~15 s, data_ttl TTL)
   Any QR is read, but only a LinkedIn QR authorizes/enrolls.
 """
 
@@ -158,10 +158,30 @@ def _det_postprocess(outputs, orig_h, orig_w, det_thresh=0.5, nms_thresh=0.4):
 
 
 def _rec_preprocess(bgr: np.ndarray) -> np.ndarray:
-    img = cv2.resize(bgr, (112, 112))
-    img = img[:, :, ::-1].astype(np.float32)
+    # Expects a 112x112 face crop (already landmark-aligned by norm_crop). The
+    # resize is a cheap safety net for off-size input; aligned crops pass through.
+    if bgr.shape[0] != 112 or bgr.shape[1] != 112:
+        bgr = cv2.resize(bgr, (112, 112))
+    img = bgr[:, :, ::-1].astype(np.float32)
     img = (img - 127.5) / 128.0
     return img.transpose(2, 0, 1)[np.newaxis]
+
+
+# InsightFace's 5-point similarity alignment (the same transform the CPU
+# FaceAnalysis path applies before recognition). ArcFace embeddings are only
+# discriminative on aligned crops — feeding a raw, stretched bbox makes every
+# face's embedding collapse together, so two different people can score a false
+# 0.5 match. Imported lazily so a missing insightface never breaks det-only use.
+_norm_crop = None
+
+
+def _align_crop(frame: np.ndarray, kps: np.ndarray) -> np.ndarray:
+    """112x112 face aligned from the 5 landmarks; falls back to None on failure."""
+    global _norm_crop
+    if _norm_crop is None:
+        from insightface.utils.face_align import norm_crop as _nc
+        _norm_crop = _nc
+    return _norm_crop(frame, landmark=np.asarray(kps, dtype=np.float32), image_size=112)
 
 
 
@@ -270,7 +290,14 @@ class NpuFaceEngine(threading.Thread):
             x2, y2 = min(w, int(x2)), min(h, int(y2))
             if x2 <= x1 or y2 <= y1:
                 continue
-            emb = self._infer_rec(frame[y1:y2, x1:x2])
+            # Align from the 5 landmarks before recognition (not a raw bbox crop),
+            # so the embedding matches what the CPU InsightFace path produces.
+            try:
+                crop = _align_crop(frame, fd['kps'])
+            except Exception as e:
+                print(f"[NPU] align failed, falling back to bbox crop: {e}")
+                crop = frame[y1:y2, x1:x2]
+            emb = self._infer_rec(crop)
             if emb is None:
                 continue
             face = type('Face', (), {
@@ -387,7 +414,7 @@ class AppState:
     state: State = State.LOADING
     face_db: dict = field(default_factory=dict)
     reg_frames: int = 0
-    reg_target: int = 10
+    reg_target: int = 30
     reg_name: str = ""
     last_match: Optional[str] = None
     status_msg: str = "Loading models..."
@@ -396,6 +423,7 @@ class AppState:
     reg_start_at: float = 0.0       # when REGISTRATION capture began
     idle_timeout: float = 5.0       # no-face seconds before returning to Standby (live-adjustable)
     data_ttl: float = 120.0         # seconds an enrolled face is kept (live-adjustable)
+    reg_blocked: bool = False       # two faces in the enroll O → capture paused ("one at a time")
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def add_face(self, name: str, embeddings: list):
@@ -461,6 +489,13 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def recognize_face(embedding: np.ndarray, face_db: dict) -> Optional[str]:
+    name, _ = recognize_face_scored(embedding, face_db)
+    return name
+
+
+def recognize_face_scored(embedding: np.ndarray, face_db: dict):
+    """Best match as (name, sim). name is None when below threshold; sim is the
+    top cosine similarity regardless (so the UI can show the real score)."""
     best_name, best_sim = None, -1.0
     for name, entry in face_db.items():
         mean_emb = entry.mean_embedding()
@@ -470,7 +505,76 @@ def recognize_face(embedding: np.ndarray, face_db: dict) -> Optional[str]:
         if sim > best_sim:
             best_sim = sim
             best_name = name
-    return best_name if best_sim >= RECOGNITION_THRESHOLD else None
+    if best_sim >= RECOGNITION_THRESHOLD:
+        return best_name, best_sim
+    return None, max(0.0, best_sim)
+
+
+def recognize_all(faces: list, face_db: dict) -> None:
+    """Annotate every face in-place with .rec_name (str|None) and .rec_sim (float).
+
+    Each face is matched independently so a crowd shows a correct per-face verdict
+    — the known person's box goes green, everyone else red — instead of one global
+    state painting all boxes the same color.
+    """
+    for f in faces:
+        emb = getattr(f, 'embedding', None)
+        if emb is None:
+            f.rec_name, f.rec_sim = None, 0.0
+        else:
+            f.rec_name, f.rec_sim = recognize_face_scored(emb, face_db)
+
+
+# ── Multi-face selection + enrollment gate ──────────────────────────────────────
+# InsightFace returns faces in detection/NMS order, not by intent — so with more
+# than one person in frame we must choose. Unlock is driven by the *largest*
+# (closest) face; enrollment is gated to the one face a visitor places inside the
+# centered "O" ring, so a bystander can never be captured by accident.
+
+def face_area(face) -> float:
+    x1, y1, x2, y2 = face.bbox
+    return float((x2 - x1) * (y2 - y1))
+
+
+def largest_face(faces):
+    """The closest face (biggest bbox). None if the list is empty."""
+    return max(faces, key=face_area) if faces else None
+
+
+# Enrollment gate ellipse, in normalized inference-frame coords. A tall oval,
+# centered to match the standby focus; radii chosen so a face at a natural
+# standing distance fills it comfortably.
+GATE_CX, GATE_CY = 0.5, 0.46
+GATE_RX, GATE_RY = 0.26, 0.36
+
+
+def gate_ellipse_px(inf_w: int, inf_h: int):
+    """Gate center + radii in inference-frame pixels (same space as face.bbox/kps)."""
+    return (GATE_CX * inf_w, GATE_CY * inf_h, GATE_RX * inf_w, GATE_RY * inf_h)
+
+
+def _in_ellipse(x, y, cx, cy, rx, ry) -> bool:
+    if rx <= 0 or ry <= 0:
+        return False
+    return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0
+
+
+def face_in_gate(face, inf_w: int, inf_h: int) -> bool:
+    """True when the face is positioned inside the enrollment O.
+
+    Requires the bbox center AND all 5 landmarks inside the ellipse — tighter
+    than a center-only test, so a face merely clipping the ring doesn't qualify.
+    """
+    cx, cy, rx, ry = gate_ellipse_px(inf_w, inf_h)
+    x1, y1, x2, y2 = face.bbox
+    if not _in_ellipse((x1 + x2) / 2, (y1 + y2) / 2, cx, cy, rx, ry):
+        return False
+    if face.kps is None:
+        return False
+    for x, y in face.kps:
+        if not _in_ellipse(x, y, cx, cy, rx, ry):
+            return False
+    return True
 
 
 # ── Face engine (background thread) ───────────────────────────────────────────
@@ -597,12 +701,23 @@ class RegistrationDriver(threading.Thread):
                 name = self.app_state.reg_name
 
             faces = self.face_engine.get_faces()
+            # Only a single face placed inside the enrollment O is captured. If two
+            # people are in the ring we pause and ask for one at a time, so we never
+            # enroll (or average in) a bystander. An empty ring simply waits.
+            in_gate = [f for f in faces
+                       if f.embedding is not None and face_in_gate(f, INF_W, INF_H)]
             captured = False
-            for face in faces:
-                if face.embedding is not None:
-                    self._embeddings.append(face.embedding.copy())
-                    captured = True
-                    break
+            if len(in_gate) == 1:
+                self._embeddings.append(in_gate[0].embedding.copy())
+                captured = True
+                with self.app_state.lock:
+                    self.app_state.reg_blocked = False
+            elif len(in_gate) >= 2:
+                with self.app_state.lock:
+                    self.app_state.reg_blocked = True
+            else:
+                with self.app_state.lock:
+                    self.app_state.reg_blocked = False
 
             if captured:
                 with self.app_state.lock:
@@ -613,7 +728,11 @@ class RegistrationDriver(threading.Thread):
                     self.on_done(name, self._embeddings)
                     return
 
-            time.sleep(0.3)
+            # ~0.5 s between captures: 30 frames spans ~15 s so the visitor has
+            # time to turn their head and vary pose for a more robust embedding.
+            # Capture only advances while a lone face is in the O, so pausing to
+            # reposition simply lengthens enrollment rather than wasting a frame.
+            time.sleep(0.5)
 
 
 # ── Drawing ───────────────────────────────────────────────────────────────────
@@ -1250,28 +1369,50 @@ def draw_access_banner(canvas: np.ndarray, text: str, color: tuple, t: float):
 
 
 def draw_face_overlays(canvas: np.ndarray, faces: list, color: tuple,
-                        sx: float, sy: float, ox: int, oy: int):
+                        sx: float, sy: float, ox: int, oy: int,
+                        per_face: bool = False):
     """
     Draw bounding box + 5 key-points. faces are in inference-frame coords;
     sx/sy/ox/oy map them onto the letterboxed display rectangle. The dense
     106-landmark cloud is intentionally skipped — it costs 100+ draws per
     face per frame and adds visual noise without aiding the demo read.
+
+    per_face=True colors each box by its own recognition verdict (green when
+    face.rec_name is set, red otherwise) and labels it with the name + score,
+    so a mixed crowd reads correctly. per_face=False uses the single `color`
+    for every box (used for the neutral/enroll states).
     """
     for face in faces:
         x1, y1, x2, y2 = face.bbox
-        cv2.rectangle(canvas,
-                      (int(x1 * sx + ox), int(y1 * sy + oy)),
-                      (int(x2 * sx + ox), int(y2 * sy + oy)),
-                      color, _th(2))
+        rec_name = getattr(face, 'rec_name', None) if per_face else None
+        if per_face:
+            box_c = UNLOCK if rec_name else LOCK
+        else:
+            box_c = color
+        px1, py1 = int(x1 * sx + ox), int(y1 * sy + oy)
+        px2, py2 = int(x2 * sx + ox), int(y2 * sy + oy)
+        cv2.rectangle(canvas, (px1, py1), (px2, py2), box_c, _th(2))
         if face.kps is not None:
             for x, y in face.kps:
-                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), _s(4), color, -1)
-        # confidence score
-        score = getattr(face, 'det_score', None)
-        if score is not None:
-            cv2.putText(canvas, f"{score:.2f}",
-                        (int(x1 * sx + ox), int(y1 * sy + oy) - _s(6)),
-                        FONT, 0.45 * S, color, _th(1), cv2.LINE_AA)
+                cv2.circle(canvas, (int(x * sx + ox), int(y * sy + oy)), _s(4), box_c, -1)
+
+        if per_face:
+            # Name + similarity above the box: 'raul 0.62' when matched, else 'unknown'.
+            sim = getattr(face, 'rec_sim', 0.0)
+            tag = f"{rec_name} {sim:.2f}" if rec_name else "unknown"
+            (tw, th), _ = cv2.getTextSize(tag, FONT, 0.6 * S, _th(2))
+            ly = max(py1 - _s(8), th + _s(4))
+            cv2.rectangle(canvas, (px1, ly - th - _s(6)), (px1 + tw + _s(10), ly + _s(4)),
+                          INDIGO_DEEP, -1)
+            cv2.putText(canvas, tag, (px1 + _s(5), ly),
+                        FONT, 0.6 * S, box_c, _th(2), cv2.LINE_AA)
+        else:
+            # confidence score
+            score = getattr(face, 'det_score', None)
+            if score is not None:
+                cv2.putText(canvas, f"{score:.2f}",
+                            (px1, py1 - _s(6)),
+                            FONT, 0.45 * S, box_c, _th(1), cv2.LINE_AA)
 
 
 def draw_loading(canvas: np.ndarray, t: float):
@@ -1353,7 +1494,8 @@ def composite_frame(canvas: np.ndarray, frame: np.ndarray):
 def draw_camera_state(canvas: np.ndarray, frame: np.ndarray, faces: list,
                        inf_w: int, inf_h: int,
                        border: tuple, label: str, label_color: tuple,
-                       reg_progress: Optional[tuple] = None):
+                       reg_progress: Optional[tuple] = None,
+                       per_face: bool = False):
     scale, _, ox, oy = composite_frame(canvas, frame)
 
     fh, fw = frame.shape[:2]
@@ -1363,7 +1505,7 @@ def draw_camera_state(canvas: np.ndarray, frame: np.ndarray, faces: list,
     dw, dh = fw * scale, fh * scale
     lm_sx = dw / inf_w
     lm_sy = dh / inf_h
-    draw_face_overlays(canvas, faces, border, lm_sx, lm_sy, ox, oy)
+    draw_face_overlays(canvas, faces, border, lm_sx, lm_sy, ox, oy, per_face=per_face)
 
     # Corner brackets in the state color (violet when neutral, green/red/amber per state)
     fx2, fy2 = ox + int(fw * scale), oy + int(fh * scale)
@@ -1463,6 +1605,81 @@ def draw_qr_countdown(canvas: np.ndarray, elapsed: float, name: str, countdown: 
     legibility_halo(canvas, cx, cy + _s(185), _s(420), _s(110), strength=0.55)
     put_centered(canvas, "GET READY", cy + _s(168), 0.9, VIOLET_HI, 2)
     put_centered(canvas, f"Enrolling  {name}", cy + _s(206), 0.56, MIST, 1)
+
+
+def draw_enroll_gate(canvas: np.ndarray, frame: np.ndarray, faces: list,
+                     inf_w: int, inf_h: int, name: str, phase: str,
+                     countdown: Optional[int] = None,
+                     reg_progress: Optional[tuple] = None,
+                     blocked: bool = False, t: float = 0.0):
+    """Live feed with a centered 'O' the visitor places their face in.
+
+    Everything outside the O is dimmed to brand indigo so the ring is the clear
+    target; only a face inside the O is captured (see RegistrationDriver). Used
+    for both the get-ready countdown (phase='countdown') and the capture itself
+    (phase='capture'). Falls back to no overlay-only drawing — the caller guards
+    the frame-less case.
+    """
+    scale, _, ox, oy = composite_frame(canvas, frame)
+    fh, fw = frame.shape[:2]
+    lm_sx = fw * scale / inf_w
+    lm_sy = fh * scale / inf_h
+
+    # Gate ellipse in display coords (same transform draw_face_overlays uses).
+    gcx, gcy, grx, gry = gate_ellipse_px(inf_w, inf_h)
+    dcx, dcy = int(gcx * lm_sx + ox), int(gcy * lm_sy + oy)
+    drx, dry = int(grx * lm_sx), int(gry * lm_sy)
+
+    # Dim everything outside the O down to brand indigo. One addWeighted through
+    # an inverted elliptical mask keeps the live face crisp inside the ring.
+    mask = np.zeros((H, W), dtype=np.uint8)
+    cv2.ellipse(mask, (dcx, dcy), (drx, dry), 0, 0, 360, 255, -1)
+    fill = np.empty_like(canvas)
+    fill[:] = INDIGO_DEEP
+    dimmed = cv2.addWeighted(canvas, 0.28, fill, 0.72, 0)
+    outside = mask == 0
+    canvas[outside] = dimmed[outside]
+
+    # Faces correctly inside the O (echo exactly what will be captured).
+    inside = [f for f in faces if face_in_gate(f, inf_w, inf_h)]
+    one_ready = len(inside) == 1 and not blocked
+
+    # The ring itself — pulsing violet, green when exactly one face is ready.
+    pulse = 0.5 + 0.5 * np.sin(t * 3.0)
+    ring_c = UNLOCK if one_ready else tuple(
+        int(VIOLET_LO[c] + (VIOLET_HI[c] - VIOLET_LO[c]) * pulse) for c in range(3))
+    cv2.ellipse(canvas, (dcx, dcy), (drx, dry), 0, 0, 360, ring_c, _th(4), cv2.LINE_AA)
+    cv2.ellipse(canvas, (dcx, dcy), (drx + _s(10), dry + _s(10)), 0, 0, 360,
+                VIOLET_LO, _th(1), cv2.LINE_AA)
+
+    draw_face_overlays(canvas, inside, ring_c, lm_sx, lm_sy, ox, oy)
+
+    # Guidance under the O.
+    ty = min(dcy + dry + _s(52), H - _s(78))
+    legibility_halo(canvas, dcx, ty - _s(14), _s(520), _s(150), strength=0.5)
+    if blocked:
+        put_centered(canvas, "ONE PERSON AT A TIME", ty, 0.9, DETECT, 2)
+        put_centered(canvas, "Only one face in the ring, please", ty + _s(34), 0.5, MIST, 1)
+    elif phase == "countdown":
+        if countdown is not None:
+            # Digit seated just inside the top of the ring so the title bar never clips it.
+            put_centered(canvas, str(max(0, countdown)), dcy - dry + _s(70),
+                         1.8 + 0.4 * pulse, INK, 3)
+        put_centered(canvas, "PLACE YOUR FACE IN THE RING", ty, 0.86, INK, 2)
+        put_centered(canvas, f"Enrolling  {name}", ty + _s(34), 0.5, VIOLET_HI, 1)
+    else:  # capture
+        head = "SLOWLY TURN YOUR HEAD" if one_ready else "PLACE YOUR FACE IN THE RING"
+        put_centered(canvas, head, ty, 0.86, INK, 2)
+        if reg_progress:
+            n, total = reg_progress
+            bw, bh = _s(360), _s(12)
+            bx, by = dcx - bw // 2, ty + _s(22)
+            cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), INDIGO_LIFT, -1, cv2.LINE_AA)
+            cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), VIOLET_LO, _th(1), cv2.LINE_AA)
+            fillw = int(bw * n / total) if total else 0
+            if fillw > 0:
+                cv2.rectangle(canvas, (bx, by), (bx + fillw, by + bh), VIOLET, -1, cv2.LINE_AA)
+            put_centered(canvas, f"{n}/{total}  {name}", by + bh + _s(22), 0.46, MIST, 1)
 
 
 def draw_hud(canvas: np.ndarray, state: State, status: str, db_count: int,
@@ -1729,6 +1946,7 @@ def main():
                 app.state = State.QR_AUTHORIZED
                 app.reg_name = qr_name
                 app.qr_authorized_at = now
+                app.reg_blocked = False
                 app.status_msg = f"QR authorized: {qr_name}"
                 state = State.QR_AUTHORIZED
 
@@ -1739,6 +1957,7 @@ def main():
                     app.state = State.REGISTRATION
                     app.reg_frames = 0
                     app.reg_start_at = now
+                    app.reg_blocked = False
                     app.status_msg = f"Registering {app.reg_name} — look at camera"
                     state = State.REGISTRATION
                     reg_thread = RegistrationDriver(app, eng, finish_registration)
@@ -1751,17 +1970,20 @@ def main():
                         app.status_msg = "Face detected — recognizing..."
                         state = State.DETECTION
                     if state in (State.DETECTION, State.RECOGNIZED, State.UNKNOWN):
-                        emb = faces[0].embedding
-                        if emb is not None:
-                            match = recognize_face(emb, app.face_db)
-                            if match:
-                                app.state = State.RECOGNIZED
-                                app.last_match = match
-                                app.status_msg = f"Welcome, {match}!"
-                            else:
-                                app.state = State.UNKNOWN
-                                app.last_match = None
-                                app.status_msg = "Unknown person — access denied"
+                        # Recognize every face independently so each box can show
+                        # its own verdict (name + green/red). The door decision
+                        # still follows the closest (largest) face only.
+                        recognize_all(faces, app.face_db)
+                        primary = largest_face(faces)
+                        match = getattr(primary, 'rec_name', None) if primary else None
+                        if match:
+                            app.state = State.RECOGNIZED
+                            app.last_match = match
+                            app.status_msg = f"Welcome, {match}!"
+                        else:
+                            app.state = State.UNKNOWN
+                            app.last_match = None
+                            app.status_msg = "Unknown person — access denied"
                 else:
                     if state != State.STANDBY and now - app.last_face_time > app.idle_timeout:
                         app.state = State.STANDBY
@@ -1776,6 +1998,7 @@ def main():
             db_count = len(app.face_db)
             idle_to  = app.idle_timeout
             data_ttl = app.data_ttl
+            reg_blocked = app.reg_blocked
 
         app.prune_expired()
 
@@ -1790,23 +2013,27 @@ def main():
                 qr_name_cur = app.reg_name
             if elapsed_qr < 5.0:
                 draw_qr_authorized(canvas, elapsed_qr, qr_name_cur)
+            elif raw_frame is not None:
+                countdown = max(0, 5 - int(elapsed_qr - 5.0))
+                draw_enroll_gate(canvas, raw_frame, faces, INF_W, INF_H, qr_name_cur,
+                                 phase="countdown", countdown=countdown, t=t)
             else:
                 countdown = max(0, 5 - int(elapsed_qr - 5.0))
                 draw_qr_countdown(canvas, elapsed_qr - 5.0, qr_name_cur, countdown)
         else:
             if state == State.DETECTION:
                 draw_camera_state(canvas, raw_frame, faces, INF_W, INF_H,
-                                  DETECT, "RECOGNIZING", DETECT)
+                                  DETECT, "RECOGNIZING", DETECT, per_face=True)
             elif state == State.RECOGNIZED:
                 draw_camera_state(canvas, raw_frame, faces, INF_W, INF_H,
-                                  UNLOCK, f"UNLOCKED   {match or '?'}", UNLOCK)
+                                  UNLOCK, f"UNLOCKED   {match or '?'}", UNLOCK, per_face=True)
             elif state == State.UNKNOWN:
                 draw_camera_state(canvas, raw_frame, faces, INF_W, INF_H,
-                                  LOCK, "ACCESS DENIED", LOCK)
+                                  LOCK, "ACCESS DENIED", LOCK, per_face=True)
             elif state == State.REGISTRATION:
-                draw_camera_state(canvas, raw_frame, faces, INF_W, INF_H,
-                                  VIOLET, f"ENROLLING   {app.reg_name}", VIOLET,
-                                  reg_progress=(reg_n, reg_tot))
+                draw_enroll_gate(canvas, raw_frame, faces, INF_W, INF_H, app.reg_name,
+                                 phase="capture", reg_progress=(reg_n, reg_tot),
+                                 blocked=reg_blocked, t=t)
 
         npu_tag = "" if _ready["npu"] else " (loading...)"
         draw_hud(canvas, state, status, db_count,

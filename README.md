@@ -14,14 +14,27 @@ with a QR-triggered self-enrollment flow and a live on-screen telemetry overlay.
 ## What it does
 
 Point a USB webcam at your door. The app sits in **Standby** until someone appears, then
-runs InsightFace detection + recognition on every frame:
+runs InsightFace detection + recognition on **every face in the frame**:
 
-- **Known face** → green **UNLOCKED** banner.
-- **Unknown face** → red **ACCESS DENIED** banner.
-- **Show a LinkedIn QR code** → the person is authorized and the app captures ~10 frames to
-  **enroll** their face under their LinkedIn username, into an in-memory database with a TTL
-  (Time To Live) that defaults to 2 minutes. *Any* QR code in frame is read, but only a LinkedIn
-  profile QR authorizes; the TTL and the idle timeout are both adjustable live from the keyboard.
+- **Known face** → **green** box with the matched name + similarity score in the corner.
+- **Unknown face** → **red** box labelled `unknown`.
+- **Several people at once** → each face is judged independently, so a known visitor shows green
+  with their name right next to a stranger's red box. The **closest (largest) face** decides the
+  headline **UNLOCKED / ACCESS DENIED** banner, so a bystander in the background can't flip it.
+- **Show a LinkedIn QR code** → the person is authorized and the app enrolls their face under their
+  LinkedIn username — **~30 frames over ~15 s**, so there's time to slowly turn your head for a
+  diverse set of angles — into an in-memory database with a TTL (Time To Live) that defaults to 2
+  minutes. *Any* QR code in frame is read, but only a LinkedIn profile QR authorizes; the TTL and
+  the idle timeout are both adjustable live from the keyboard.
+
+Enrollment uses an on-screen **"O" ring**: the live feed is dimmed to brand indigo except inside a
+central oval, and only a face placed **inside the ring** is captured — so a bystander is never
+enrolled by accident. If **two** faces enter the ring, capture pauses with **"one person at a
+time"** until exactly one remains.
+
+Recognition runs on **landmark-aligned** 112×112 crops (InsightFace `norm_crop`) on **both** the CPU
+and NPU paths, so the ArcFace embeddings stay discriminative — a face the system hasn't enrolled
+scores low and stays red rather than drifting toward a false match.
 
 Press **B** at any time to switch the inference backend between **CPU** (onnxruntime) and
 **NPU** (HTP v75, in-process via `qai-appbuilder`) live, and watch the FPS (Frames Per Second) and
@@ -32,10 +45,10 @@ the same recognition pipeline, same models, offloaded to the NPU.
 |-------|--------|
 | Standby | Dragonwing idle screen, awaiting a visitor |
 | Detection | Live feed, amber brackets, "RECOGNIZING" |
-| Recognized | Green brackets, "UNLOCKED — <name>" |
-| Unknown | Red brackets, "ACCESS DENIED" |
-| QR authorized | Violet burst + green confirm, then a get-ready countdown |
-| Registration | Live feed, violet brackets, capture progress bar |
+| Recognized | Per-face green box, "<name> <score>" label, "UNLOCKED — <name>" banner |
+| Unknown | Per-face red box, `unknown` label, "ACCESS DENIED" banner |
+| QR authorized | Violet burst + green confirm, then the live feed with the enrollment "O" ring + get-ready countdown |
+| Registration | Live feed inside the "O" ring, violet pulse (green when one face is ready), capture progress bar |
 
 ---
 
@@ -254,13 +267,14 @@ CameraThread     V4L2 capture (synthetic frames if no camera), always-latest fra
 FaceEngine       CPU backend — InsightFace / onnxruntime, latest-frame-wins
 NpuFaceEngine    NPU backend — HTP v75 via qai-appbuilder, in-process, latest-frame-wins
 StatsMonitor     psutil per-core CPU % + RAM, polled every 0.5s
-RegistrationDriver  captures N embeddings during enrollment
-main loop        state machine + Dragonwing rendering + key handling
+RegistrationDriver  captures ~30 aligned embeddings over ~15 s, gated by the "O" ring
+main loop        per-face recognition + state machine + Dragonwing rendering + key handling
 ```
 
 **State machine:** `LOADING → STANDBY → DETECTION → {RECOGNIZED | UNKNOWN}`, with
 `QR_AUTHORIZED → REGISTRATION` branching off on a QR trigger, and a no-face timeout (default
-5 s, adjustable live with `[`/`]`) returning to Standby.
+5 s, adjustable live with `[`/`]`) returning to Standby. Every detected face is recognized
+independently each frame; the largest (closest) face decides the RECOGNIZED/UNKNOWN headline.
 
 ### Why the NPU engine runs in-process
 
