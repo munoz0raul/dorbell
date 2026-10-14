@@ -20,6 +20,24 @@ BACKEND=${1:-npu}
 IMAGE=dragonwing-doorbell
 NAME=dragonwing-doorbell
 
+# --- Resolve the real user's home (survive `sudo` / `sudo su`) -----------------
+# The models live under the login user's $HOME (~/qnn_context, ~/.insightface),
+# and the Xwayland cookie/socket belong to that user's session. Under `sudo su`
+# $HOME flips to /root, where those paths are empty -- the models silently fail
+# to mount and insightface tries to re-download into a read-only mount. So pin
+# $HOME to the invoking user, not root, regardless of how we were launched.
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+elif [ "$(id -u)" = 0 ] && [ -d /home/ubuntu ]; then
+    USER_HOME=/home/ubuntu          # plain `su -` loses SUDO_USER; fall back
+else
+    USER_HOME=$HOME
+fi
+if [ ! -d "$USER_HOME/qnn_context" ] && [ ! -d "$USER_HOME/.insightface" ]; then
+    echo "WARNING: no models under $USER_HOME (qnn_context/.insightface). Run as the" >&2
+    echo "         login user, or put the models there. NPU will fail to load." >&2
+fi
+
 # --- Host display: same keep-awake dance as the bare-metal launcher -----------
 # Done on the HOST (not in the container): this is the GNOME/Xwayland session
 # that owns the HDMI output. The container just draws into its socket.
@@ -68,6 +86,6 @@ exec docker run --rm --name "$NAME" \
     -v "$AUTH":/tmp/xauth:ro \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v /run/user/1000:/run/user/1000 \
-    -v "$HOME/qnn_context":/root/qnn_context:ro \
-    -v "$HOME/.insightface":/root/.insightface:ro \
+    -v "$USER_HOME/qnn_context":/root/qnn_context:ro \
+    -v "$USER_HOME/.insightface":/root/.insightface:ro \
     "$IMAGE" --backend "$BACKEND"
