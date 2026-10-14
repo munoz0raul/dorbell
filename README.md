@@ -255,6 +255,26 @@ the demo rather than fighting over the camera. The wrapper runs the CPU path whe
 as `run_doorbell.sh cpu`; duplicate the `.desktop` file with that argument if you want a
 second CPU icon.
 
+### 2.8 — Run in a container (optional)
+
+The same demo can run as a Docker container on the board — full-screen on HDMI, USB webcam,
+NPU inference — using the official Dragonwing **Container Device Interface (CDI)** to reach the
+HTP v75. The image stays driver-free: `qai-appbuilder` bundles its own QNN runtime, so the CDI
+only forwards the kernel-coupled FastRPC/DMA plumbing from the host.
+
+```bash
+# one-time: install Docker, then the CDI
+sudo apt install -y docker.io && sudo usermod -aG docker "$USER"   # re-login after
+sudo python3 container/cdi/install_cdi.py --file container/cdi/cdi-hw-acc-8275.json
+
+# build (from repo root) and run
+docker build -t dragonwing-doorbell -f container/Dockerfile .
+bash container/run_doorbell_container.sh npu
+```
+
+Full walkthrough, including the CDI/`qai-appbuilder` split and troubleshooting deltas, is in
+[`container/README.md`](container/README.md).
+
 ---
 
 ## Architecture
@@ -313,6 +333,7 @@ per-core load live when you toggle with **B**.
 doorbell.py            The application (single file — scp to the board and run)
 run_doorbell.sh        Board launcher — sets display env, keeps screen awake, single-instance
 dragonwing-doorbell-npu.desktop  GNOME desktop icon that one-click-launches the NPU backend
+container/             Dockerized Stage 2 — Dockerfile, requirements, CDI for HTP v75, run wrapper
 aihub_compile.py       Host: ONNX -> AI Hub W8A16 quantize + HTP v75 compile -> DLC
 benchmark.py           CPU vs NPU latency benchmark
 tools/

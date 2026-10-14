@@ -1,0 +1,88 @@
+{
+    "cdiVersion": "0.6.0",
+    "kind": "qualcomm.com/device",
+    "devices": [
+        {
+            "name": "cdi-hw-acc",
+            "containerEdits": {
+                "deviceNodes": [
+                    {
+                        "path": "/dev/fastrpc-cdsp"
+                    },
+                    {
+                        "path": "/dev/dma_heap/system"
+                    },
+                    {
+                        "path": "/dev/dma_heap/qcom,system"
+                    }
+                ],
+                "mounts": [
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libcdsprpc.so",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libcdsprpc.so",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1.0.0",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1.0.0",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libadsprpc.so",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libadsprpc.so",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libadsprpc.so.1",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libadsprpc.so.1",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libadsprpc.so.1.0.0",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libadsprpc.so.1.0.0",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libdmabufheap.so.0",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libdmabufheap.so.0",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/aarch64-linux-gnu/libdmabufheap.so.0.0.0",
+                        "containerPath": "/usr/lib/aarch64-linux-gnu/libdmabufheap.so.0.0.0",
+                        "options": [
+                            "bind"
+                        ]
+                    },
+                    {
+                        "hostPath": "/usr/lib/dsp/cdsp",
+                        "containerPath": "/usr/lib/dsp/cdsp",
+                        "options": [
+                            "bind",
+                            "ro"
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+}

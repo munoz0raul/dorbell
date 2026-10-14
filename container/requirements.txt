@@ -1,0 +1,16 @@
+# Dragonwing Doorbell — container Python dependencies.
+#
+# Versions pinned to what is proven working on the IQ-8275 board (Ubuntu 24.04,
+# aarch64) so the image reproduces the bare-metal demo exactly.
+#
+# qai-appbuilder bundles its own QNN runtime libraries and HTP v75 skels, so no
+# QNN SDK or host QNN libs are needed in the image — the CDI forwards only the
+# kernel-coupled FastRPC/DMA plumbing. opencv-python-headless is used because
+# the GUI surface is OpenCV highgui talking to the host Xwayland socket over the
+# X11 libs installed in the Dockerfile (not cv2's own GTK build).
+insightface==2.1
+onnxruntime==1.24.2
+numpy==2.4.4
+psutil==7.2.2
+opencv-python-headless==5.0.0.93
+qai-appbuilder
