@@ -1,4 +1,4 @@
-# Installation — IQ-8275 EVK + QLI 2.1 (`qli-2.1.1-qcom-multimedia-image.zip`)
+# Installation — IQ-8275 EVK + QLI 2.1 (`qcom-multimedia` image, either variant)
 
 This is the exact install for **this demo's reference configuration**: a Qualcomm
 Dragonwing **IQ-8275 EVK** flashed with the **Qualcomm Linux (QLI) 2.1**
@@ -8,33 +8,36 @@ board to the containerized NPU (Neural Processing Unit) doorbell running
 full-screen.
 
 Every command below was verified end-to-end on a freshly reflashed IQ-8275 EVK
-running QLI 2.1 (DSP firmware QAIRT 2.50.0, HTP v75).
+running QLI 2.1 (DSP firmware QAIRT 2.50.0, HTP v75) — **on both multimedia image
+variants** (see below).
 
 ---
 
-## 1. Download the image
+## 1. Download the image — either variant works
 
-Grab `qli-2.1.1-qcom-multimedia-image.zip` from the CodeLinaro QLI CI artifacts:
+**You can run this demo on either IQ-8275 multimedia image.** Both were verified
+end-to-end with the identical commands in §4; pick either one and download it from
+the CodeLinaro QLI CI artifacts:
 
-> https://artifacts.codelinaro.org/ui/native/qli-ci/flashable-binaries/meta-qcom/qcom-distro-sota/iq-8275-evk/
+| Image | Direct download |
+|-------|-----------------|
+| **Standard** multimedia | https://artifacts.codelinaro.org/artifactory/qli-ci/flashable-binaries/meta-qcom/qcom-distro-sota/iq-8275-evk/qli-2.1.1-qcom-multimedia-image.zip |
+| **Proprietary** multimedia | https://artifacts.codelinaro.org/artifactory/qli-ci/flashable-binaries/meta-qcom/qcom-distro-sota/iq-8275-evk/qli-2.1.1-qcom-multimedia-proprietary-image.zip |
 
-This is the standard (non-proprietary) multimedia image. It ships the closed-source
-Hexagon/FastRPC runtime the NPU needs — `libcdsprpc.so`, the signed CDSP (Compute
-DSP) firmware, and `/usr/share/qcom/.../dsp/cdsp/` with the `fastrpc_shell_*` +
-`libQnnHtpV75Skel.so` — so the HTP (Hexagon Tensor Processor) v75 path works out of
-the box. Unzip it:
+Both ship the closed-source Hexagon/FastRPC runtime the NPU needs —
+`libcdsprpc.so`, the signed CDSP (Compute DSP) firmware, and
+`/usr/share/qcom/.../dsp/cdsp/` with the `fastrpc_shell_*` + `libQnnHtpV75Skel.so`
+— so the HTP (Hexagon Tensor Processor) v75 path works out of the box on either.
+The two builds differ only in details the run wrapper auto-detects at runtime
+(device-node group IDs, the on-SoC DSP directory, the USB camera's `/dev/video*`
+node), so **no change to the demo is needed to run on either image.** Unzip
+whichever you downloaded:
 
 ```bash
-unzip qli-2.1.1-qcom-multimedia-image.zip
+unzip qli-2.1.1-qcom-multimedia-image.zip              # standard
+# or
+unzip qli-2.1.1-qcom-multimedia-proprietary-image.zip  # proprietary
 ```
-
-> **Both multimedia images work, identically.** This demo was verified end-to-end
-> on *both* the standard `qcom-multimedia-image` and the
-> `qcom-multimedia-proprietary-image` for the IQ-8275 EVK — same QAIRT (Qualcomm
-> AI Runtime SDK) 2.50.0 firmware, same DSP runtime path, same four commands in
-> §4. The run wrapper auto-detects everything that differs between the two builds
-> (device-node group IDs, the on-SoC DSP directory, the USB camera's `/dev/video*`
-> node), so **no change is needed to run on either image.**
 
 ## 2. Install (flash) the image
 
