@@ -50,7 +50,34 @@ sudo usermod -aG docker "$USER"
 # log out and back in (or: newgrp docker) so the group takes effect
 ```
 
-### 2. Install the CDI
+### 2. Install the NPU runtime stack (fresh Canonical Ubuntu only)
+
+A **fresh Canonical Ubuntu 24.04 IQ-8275 image does NOT preinstall the
+FastRPC/QNN host stack** — no `libcdsprpc.so`, no DMA-heap allocator, no
+`/dev/fastrpc-cdsp` group. The CDI (next step) forwards these host libraries and
+device nodes into the container, so they must exist on the host first. Install
+them from the Qualcomm IoT PPA:
+
+```bash
+sudo add-apt-repository -y ppa:ubuntu-qcom-iot/qcom-ppa
+sudo apt update
+sudo apt install -y qcom-fastrpc1 qcom-libdmabufheap qairt-libs qairt-dsp-binaries
+```
+
+This brings `/usr/lib/aarch64-linux-gnu/lib{cdsp,adsp}rpc.so*` and
+`libdmabufheap.so.0`, creates the `fastrpc` and `dmaheap` groups, and sets
+`/dev/fastrpc-cdsp` to `fastrpc:fastrpc 0664`. Add yourself to the groups (the
+run wrapper passes them to the container, but you need them to probe on the host):
+
+```bash
+sudo usermod -aG fastrpc,dmaheap "$USER"   # log out/in for this to take effect
+```
+
+> **QLI (Yocto) hosts skip this step** — the QLI multimedia image ships the
+> FastRPC/QNN runtime as part of the OS. This step is **only** for a fresh
+> Canonical Ubuntu image. See [`qli/README.md`](qli/README.md) for the QLI path.
+
+### 3. Install the CDI
 
 Copy this `container/` directory and `doorbell.py` to the board, then:
 
@@ -59,11 +86,12 @@ sudo python3 cdi/install_cdi.py --file cdi/cdi-hw-acc-8275.json
 ```
 
 The installer writes `/etc/cdi/cdi-hw-acc.json`, automatically dropping any mount
-whose host path is absent. It should report **no missing mounts** on a stock
-IQ-8275 Ubuntu 24.04 image. (If it says the file already exists, remove the old
+whose host path is absent. After step 2 it should report **no missing mounts**;
+if you skipped step 2 it will prune the FastRPC libs and the NPU will silently
+fall back to CPU. (If it says the file already exists, remove the old
 `/etc/cdi/cdi-hw-acc.json` first.)
 
-### 3. Build the image
+### 4. Build the image
 
 Build from the **repo root** so `doorbell.py` is in the build context:
 
@@ -72,9 +100,15 @@ docker build -t dragonwing-doorbell -f container/Dockerfile .
 ```
 
 The aarch64 wheels (insightface, onnxruntime, opencv, qai-appbuilder) take a few
-minutes to install on the first build.
+minutes to install on the first build. **Use the plain build above on every
+board** — the committed context binaries are generated at QAIRT 2.50, so the
+image's default `qai-appbuilder==2.50.40` is correct even on a board whose DSP
+firmware is *older* (e.g. the Canonical Ubuntu image's 2.46). Do **not** pass
+`--build-arg QAI_APPBUILDER_VERSION=` to "match" older firmware — that makes the
+host SDK older than the `.bin` and the context load is rejected (`Using newer
+context binary on old SDK`), silently dropping to CPU. See the Dockerfile comment.
 
-### 4. Models — committed for NPU, auto-downloaded for CPU
+### 5. Models — committed for NPU, auto-downloaded for CPU
 
 The NPU HTP context binaries are **committed to the repo** under
 [`qnn_context/`](../qnn_context/) (only ~5 MB, SoC-pinned), so after `git clone`
@@ -121,6 +155,22 @@ are identical to bare metal — see main README §2.5.
   Xwayland auth cookie must both be mounted — the wrapper does both. Check
   `ls /tmp/.X11-unix/X0` and `ls /run/user/1000/.mutter-Xwaylandauth.*` exist on
   the host; the wrapper warns if the cookie is missing.
+- **HTP falls back to CPU with `Using newer context binary on old SDK` /
+  `Fail to get context blob with err 5000` / `Failed to create context from
+  binary with err 0x1388`.** The image's `qai-appbuilder` host SDK is **older**
+  than the SDK that generated `qnn_context/*.bin` (2.50). This is a host-SDK vs
+  `.bin`-generation check done *before* the DSP, so it is independent of the
+  board's DSP firmware version — a 2.46-firmware board loads the 2.50 `.bin`
+  fine with the default 2.50.40 image. The fix is to **not** downgrade: build
+  plainly (`docker build -t dragonwing-doorbell -f container/Dockerfile .`) with
+  no `QAI_APPBUILDER_VERSION` override. Only override if you *regenerated* the
+  `.bin` at a different SDK generation.
+- **`install_cdi.py` prunes `libcdsprpc.so` / `libdmabufheap.so.0` on a fresh
+  Ubuntu image.** You skipped step 2 — the Canonical image ships without the
+  FastRPC/QNN runtime. Install it (`sudo apt install qcom-fastrpc1
+  qcom-libdmabufheap qairt-libs qairt-dsp-binaries` from the
+  `ubuntu-qcom-iot/qcom-ppa` PPA) and re-run the installer (`rm -f
+  /etc/cdi/cdi-hw-acc.json` first).
 - **HTP falls back to CPU (`loadRemoteSymbols failed err 4000`, `Failed to create
   transport`).** This is almost always a missing userspace library, *not* a
   permissions problem — `--privileged` / `--pid=host` do **not** fix it. The usual
