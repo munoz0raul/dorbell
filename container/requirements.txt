@@ -1,24 +1,18 @@
 # Dragonwing Doorbell — container Python dependencies.
 #
-# Versions pinned to what is proven working on the IQ-8275 board (aarch64) so the
-# image reproduces the demo exactly.
+# qai-appbuilder is NOT listed here: it is installed in the Dockerfile from
+# Qualcomm's PUBLIC GitHub release (a cp310 wheel), because PyPI no longer ships
+# any 2.50.x wheel and the committed qnn_context/*.bin require a 2.50.x host SDK.
+# See the Dockerfile header for the full GLIBC + QAIRT-version rationale.
 #
-# qai-appbuilder bundles its own QNN runtime libraries and HTP v75 skels, so no
-# QNN SDK or host QNN libs are needed in the image. opencv-python-headless is
-# used because the GUI surface is OpenCV highgui talking to the host Xwayland
-# socket over the X11 libs installed in the Dockerfile (not cv2's own GTK build).
-#
-# qai-appbuilder is pinned to 2.50.40 because its bundled QNN version MUST MATCH
-# the host DSP firmware's QAIRT version, or the on-device HTP session is rejected
-# (`openSessionForPriority ... status=0x72`, `Failed to load skel 1002`) and the
-# NPU silently falls back to CPU. The QLI 2.1 image on the IQ-8275 ships QAIRT
-# **2.50.0** DSP firmware (verify: `strings .../dsp/cdsp/libQnnHtpV75.so | grep
-# v2.5`), which 2.50.40 matches; the pip default (2.51.40) does NOT and fails.
-# If your host carries a different QAIRT firmware, pin the matching qai-appbuilder
-# (available: 2.51.40, 2.50.40, 2.48.40, 2.40.0).
+# These install into the Dockerfile's python3.10 venv. onnxruntime and numpy are
+# given as RANGES, not exact pins: the cp310 wheel set differs from cp312 (there
+# is no onnxruntime 1.24.x for cp310), and qai-appbuilder caps numpy<=2.4.4. pip
+# resolves a compatible trio. opencv-python-headless is used because the GUI is
+# OpenCV highgui talking to the host Xwayland socket over the X11 libs installed
+# in the Dockerfile (not cv2's own GTK build).
 insightface==2.1
-onnxruntime==1.24.2
-numpy==2.4.4
+onnxruntime>=1.19,<1.24
+numpy>=1.22,<=2.4.4
 psutil==7.2.2
 opencv-python-headless==5.0.0.93
-qai-appbuilder==2.50.40

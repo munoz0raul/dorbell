@@ -601,8 +601,21 @@ class FaceEngine(threading.Thread):
 
     def run(self):
         from insightface.app import FaceAnalysis
-        self.fa = FaceAnalysis(name='buffalo_sc', providers=['CPUExecutionProvider'])
-        self.fa.prepare(ctx_id=0, det_size=(320, 320))
+        try:
+            self.fa = FaceAnalysis(name='buffalo_sc', providers=['CPUExecutionProvider'])
+            self.fa.prepare(ctx_id=0, det_size=(320, 320))
+        except Exception as e:
+            # On a freshly flashed board the buffalo_sc ONNX models are not staged
+            # and ~/.insightface is a read-only mount, so InsightFace cannot
+            # auto-download them -> this CPU engine stays unavailable. The NPU
+            # backend is unaffected; the B-toggle to CPU simply shows no faces
+            # until the models are staged. Degrade gracefully instead of killing
+            # the thread with an unhandled traceback.
+            print(f"[CPU] InsightFace unavailable: {e}", flush=True)
+            print("[CPU] stage ~/.insightface/models/buffalo_sc to enable the CPU backend", flush=True)
+            self.fa = None
+            self.on_ready()
+            return
         self.on_ready()
         while self.running:
             with self._pending_lock:
