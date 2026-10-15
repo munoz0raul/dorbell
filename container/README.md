@@ -99,14 +99,30 @@ Build from the **repo root** so `doorbell.py` is in the build context:
 docker build -t dragonwing-doorbell -f container/Dockerfile .
 ```
 
-The aarch64 wheels (insightface, onnxruntime, opencv, qai-appbuilder) take a few
-minutes to install on the first build. **Use the plain build above on every
-board** — the committed context binaries are generated at QAIRT 2.50, so the
-image's default `qai-appbuilder==2.50.40` is correct even on a board whose DSP
-firmware is *older* (e.g. the Canonical Ubuntu image's 2.46). Do **not** pass
-`--build-arg QAI_APPBUILDER_VERSION=` to "match" older firmware — that makes the
-host SDK older than the `.bin` and the context load is rejected (`Using newer
-context binary on old SDK`), silently dropping to CPU. See the Dockerfile comment.
+The aarch64 wheels (insightface, onnxruntime, opencv) plus the QNN runtime take a
+few minutes to install on the first build. **Use the plain build above on every
+board.** The committed context binaries are generated at QAIRT 2.50, so the image
+installs a **2.50.x `qai-appbuilder`** — specifically Qualcomm's public GitHub
+release `qualcomm/qai-appbuilder` **v2.50.0** (PyPI no longer ships any 2.50.x
+wheel). That build is correct on every board whose `.bin` is the committed 2.50
+set, **even one whose DSP firmware is older** (e.g. the Canonical Ubuntu image's
+2.46 — the older firmware still accepts the 2.50-host HTP session). Do **not**
+try to "match" older firmware with an older `qai-appbuilder`: that makes the host
+SDK older than the `.bin` and the context load is rejected (`Using newer context
+binary on old SDK`), silently dropping to CPU.
+
+Why the image carries a **python3.10 venv** on an ubuntu:24.04 base (see the
+Dockerfile header for the full reasoning): the only public 2.50.x `qai-appbuilder`
+is a **cp310** wheel, but ubuntu:24.04's system Python is 3.12 — so the app runs
+from a deadsnakes python3.10 venv. The base must stay ubuntu:24.04 because the
+host `libcdsprpc.so` the CDI forwards links **GLIBC_2.38** (ubuntu:22.04 ships
+only 2.35 → `loadRemoteSymbols failed err 4000`). To run `.bin` **regenerated** at
+a different SDK, point the build at that version's wheel:
+
+```bash
+docker build -t dragonwing-doorbell -f container/Dockerfile \
+  --build-arg QAI_APPBUILDER_WHEEL=https://github.com/qualcomm/qai-appbuilder/releases/download/v2.51.40/qai_appbuilder-2.51.40-cp310-cp310-manylinux_2_39_aarch64.whl .
+```
 
 ### 5. Models — committed for NPU, auto-downloaded for CPU
 
@@ -155,16 +171,28 @@ are identical to bare metal — see main README §2.5.
   Xwayland auth cookie must both be mounted — the wrapper does both. Check
   `ls /tmp/.X11-unix/X0` and `ls /run/user/1000/.mutter-Xwaylandauth.*` exist on
   the host; the wrapper warns if the cookie is missing.
+- **Build fails: `No matching distribution found for qai-appbuilder==2.50.40`.**
+  PyPI removed every 2.50.x wheel. The current Dockerfile does not use PyPI for
+  it — it installs the public GitHub wheel into a python3.10 venv. Make sure you
+  are on a current checkout (`git pull`); an older Dockerfile pinned the
+  now-absent PyPI version.
+- **HTP falls back to CPU with `loadRemoteSymbols failed err 4000` /
+  `Transport layer setup failed: 14001` on the FastRPC stub.** The container
+  base's GLIBC is older than the host `libcdsprpc.so` requires (it links
+  `GLIBC_2.38`). Keep the base at **ubuntu:24.04** (GLIBC 2.39); ubuntu:22.04
+  (2.35) triggers exactly this. Confirm inside the container with `ldd` on the
+  bundled `libQnnHtpV75Stub.so` — a `GLIBC_2.38 not found (required by
+  libcdsprpc.so)` line is the signature.
 - **HTP falls back to CPU with `Using newer context binary on old SDK` /
   `Fail to get context blob with err 5000` / `Failed to create context from
   binary with err 0x1388`.** The image's `qai-appbuilder` host SDK is **older**
   than the SDK that generated `qnn_context/*.bin` (2.50). This is a host-SDK vs
   `.bin`-generation check done *before* the DSP, so it is independent of the
   board's DSP firmware version — a 2.46-firmware board loads the 2.50 `.bin`
-  fine with the default 2.50.40 image. The fix is to **not** downgrade: build
+  fine with the default (2.50.0) image. The fix is to **not** downgrade: build
   plainly (`docker build -t dragonwing-doorbell -f container/Dockerfile .`) with
-  no `QAI_APPBUILDER_VERSION` override. Only override if you *regenerated* the
-  `.bin` at a different SDK generation.
+  no `QAI_APPBUILDER_WHEEL` override. Only override if you *regenerated* the
+  `.bin` at a different SDK generation (point it at that version's cp310 wheel).
 - **`install_cdi.py` prunes `libcdsprpc.so` / `libdmabufheap.so.0` on a fresh
   Ubuntu image.** You skipped step 2 — the Canonical image ships without the
   FastRPC/QNN runtime. Install it (`sudo apt install qcom-fastrpc1

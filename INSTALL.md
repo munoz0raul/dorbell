@@ -106,7 +106,10 @@ bash run_doorbell_container_qli.sh npu
 ```
 
 The build takes a few minutes the first time (it pulls the aarch64 Python wheels —
-insightface, onnxruntime, opencv, `qai-appbuilder==2.50.40`). The run wrapper
+insightface, onnxruntime, opencv, and the 2.50.x `qai-appbuilder` QNN runtime from
+Qualcomm's public GitHub release, into a python3.10 venv — see
+[`container/README.md`](container/README.md) for the GLIBC + QAIRT-version
+rationale). The run wrapper
 auto-detects everything board-specific: the Weston display uid, the on-SoC DSP
 runtime directory, the USB webcam's `/dev/video*` node, and the
 `fastrpc`/`dmaheap`/`video` group IDs.
@@ -159,7 +162,8 @@ snags:
   `openSessionForPriority ... status=0x72`. The usual cause on a new board is a
   QAIRT (Qualcomm AI Runtime SDK) version mismatch — verify the firmware is 2.50.x
   (`strings /usr/share/qcom/*/Qualcomm/*/dsp/cdsp/libQnnHtpV75.so | grep v2.5`); the
-  image pins `qai-appbuilder==2.50.40` to match.
+  image installs a 2.50.x `qai-appbuilder` (Qualcomm's public GitHub v2.50.0 wheel)
+  to match.
 - **`[Camera] No camera — using synthetic frames` with a webcam plugged in.** On QLI
   the USB cam enumerates high (behind the ISP — Image Signal Processor — nodes);
   check `v4l2-ctl --list-devices`. The app probes all present nodes automatically.

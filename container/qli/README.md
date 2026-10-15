@@ -17,7 +17,7 @@ Weston/HDMI display with a USB webcam.
 | **FastRPC lib deps** | host `libcdsprpc.so` links `libdmabufheap.so.0` | varies by QLI build; often links **`libyaml-0.so.2`** and `libbsd.so.0` instead, and `libdmabufheap` may be absent | `libyaml-0-2` is apt-installed in `../Dockerfile`; the CDI lists every candidate lib and `install_cdi.py` **prunes whatever the host lacks**. Always `ldd` the mounted `libcdsprpc.so` *inside* the container to catch a `=> not found`. |
 | **DMA-heap + FastRPC nodes** | passed via CDI | CDI injection stamps the nodes **gid 0**, so `--group-add dmaheap/fastrpc` can't grant access and the uid-1000 process is denied the ION heap (NPU dies) | the nodes are passed as **plain `docker run --device`** (which **preserves the host gid** — `dmaheap`/`fastrpc`), *not* via the CDI; the CDI now carries only the lib mounts. `--group-add` unlocks them. |
 | **Camera node** | USB cam usually `/dev/video0` | on-SoC Iris codec + ISP occupy `video0..27`; the **USB webcam enumerates high** (e.g. `/dev/video28`) | the wrapper passes through only the **USB-backed** `/dev/video*` nodes; `doorbell.py` probes the actual present nodes (not a fixed `0..5` range). |
-| **QAIRT version match** | n/a | the on-SoC DSP firmware ships a **specific QAIRT version** (e.g. **2.50.0** on this QLI 2.1 build); a mismatched host QNN is rejected on-device (`openSessionForPriority status=0x72`, `Failed to load skel 1002`) → silent CPU fallback | `qai-appbuilder` is pinned in `../requirements.txt` to the matching version (**2.50.40**). Verify firmware: `strings .../dsp/cdsp/libQnnHtpV75.so \| grep v2.5`. |
+| **QAIRT version match** | n/a | the on-SoC DSP firmware ships a **specific QAIRT version** (e.g. **2.50.0** on this QLI 2.1 build); a mismatched host QNN is rejected on-device (`openSessionForPriority status=0x72`, `Failed to load skel 1002`) → silent CPU fallback | `qai-appbuilder` is installed by `../Dockerfile` at a matching **2.50.x** build (Qualcomm's public GitHub v2.50.0 wheel). Verify firmware: `strings .../dsp/cdsp/libQnnHtpV75.so \| grep v2.5`. |
 | **FastRPC DSP shell** | n/a | the FastRPC lib derives the board DSP dir from `/sys/firmware/devicetree/base/model` — **absent in the container** — then only probes hardcoded dirs; `DSP_LIBRARY_PATH` is *not* consulted for the shell | the wrapper auto-detects the board `…/dsp/cdsp` dir (the one holding `fastrpc_shell_unsigned_3` + `libQnnHtpV75Skel.so`) and bind-mounts it onto the hardcoded **`/usr/lib/dsp/cdsp`**. |
 
 The NPU runtime needs no QNN SDK on the host: `qai-appbuilder` (installed by the
@@ -103,9 +103,10 @@ Env overrides: `WESTON_UID` (default: owner of `/tmp/.X11-unix/X0`),
   1. **QAIRT version skew** — the bundled `qai-appbuilder` QNN ≠ the host DSP
      firmware's QAIRT. The failing log line shows the host QNN version in the
      skel URI (`…?qnn_2_51_40_skel_handle_invoke`); compare to the firmware
-     (`strings …/dsp/cdsp/libQnnHtpV75.so | grep v2.`). Pin the matching
-     `qai-appbuilder` in `../requirements.txt` (available: 2.51.40, 2.50.40,
-     2.48.40, 2.40.0) and rebuild.
+     (`strings …/dsp/cdsp/libQnnHtpV75.so | grep v2.`). Point the build at the
+     matching `qai-appbuilder` cp310 wheel via the `QAI_APPBUILDER_WHEEL`
+     build-arg (the GitHub releases of `qualcomm/qai-appbuilder` carry 2.51.40,
+     2.50.0, 2.48.40, 2.40.0 — see `../README.md`) and rebuild.
   2. **FastRPC shell not found** — the lib can't derive the board DSP dir
      (`/sys/firmware/devicetree/base/model` is absent in-container) and only
      probes hardcoded dirs. The wrapper bind-mounts the board `…/dsp/cdsp` onto

@@ -19,7 +19,8 @@ Why this works even though the board firmware is **QAIRT (Qualcomm AI Runtime SD
 2.46** while the committed NPU context binaries were generated at **2.50**: the
 version that matters is the **host SDK bundled in `qai-appbuilder` vs the SDK that
 generated the `.bin`**, not the board's DSP (Digital Signal Processor) firmware.
-The default image pins `qai-appbuilder==2.50.40`, which matches the committed
+The default image installs a 2.50.x `qai-appbuilder` (Qualcomm's public GitHub
+v2.50.0 wheel), which matches the committed
 `.bin`, and the older 2.46 DSP firmware accepts that HTP (Hexagon Tensor
 Processor) session fine. **Do not downgrade `qai-appbuilder` to "match" 2.46** —
 that re-triggers a `Using newer context binary on old SDK` rejection and silently
@@ -184,7 +185,7 @@ sudo python3 cdi/install_cdi.py --file cdi/cdi-hw-acc-8275.json
 # --- 6.3  Build the image (from the repo root, so doorbell.py is in the build context) ---
 cd ~/dorbell
 docker build -t dragonwing-doorbell -f container/Dockerfile .
-# Use the PLAIN build -- NO --build-arg. The default qai-appbuilder==2.50.40
+# Use the PLAIN build -- NO --build-arg. The default 2.50.x qai-appbuilder
 # matches the committed .bin and loads on this 2.46-firmware board.
 
 # --- 6.4  Run the NPU demo (full-screen on HDMI) ---
@@ -193,7 +194,10 @@ bash container/run_doorbell_container.sh npu
 ```
 
 The build takes a few minutes the first time (it pulls the aarch64 Python wheels —
-insightface, onnxruntime, opencv, `qai-appbuilder==2.50.40`). The run wrapper
+insightface, onnxruntime, opencv, and the 2.50.x `qai-appbuilder` QNN runtime from
+Qualcomm's public GitHub release, into a python3.10 venv — see
+[`container/README.md`](container/README.md) for the GLIBC + QAIRT-version
+rationale). The run wrapper
 auto-detects everything board-specific: the GNOME/Xwayland display cookie, the USB
 webcam's `/dev/video*` node, and the `fastrpc`/`dmaheap`/`video` group IDs — and it
 runs the container as **root** (unlike the QLI path, which runs as the Weston uid).
@@ -244,8 +248,8 @@ common Ubuntu first-run snags:
 - **`[NPU] ... ready` but `Using newer context binary on old SDK` / `err 5000` /
   `Failed to create context from binary 0x1388` above it.** The image's
   `qai-appbuilder` host SDK is **older** than the SDK that generated the `.bin`
-  (2.50). Build **plainly** with no `QAI_APPBUILDER_VERSION` override — the
-  default 2.50.40 is correct for the committed binaries. (This is independent of
+  (2.50). Build **plainly** with no `QAI_APPBUILDER_WHEEL` override — the
+  default 2.50.x wheel is correct for the committed binaries. (This is independent of
   the board's 2.46 firmware.) Trust the `load Nms` figure and the **absence** of
   those error lines, not the "ready" string.
 - **`[Camera] No camera — using synthetic frames` with a webcam plugged in.**
