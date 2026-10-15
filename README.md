@@ -8,6 +8,7 @@ Real-time face detection and recognition at the edge — on the CPU *or* the HTP
 with a QR-triggered self-enrollment flow and a live on-screen telemetry overlay.
 
 **→ [INSTALL.md](INSTALL.md): one-page install for the reference config** (IQ-8275 EVK + QLI 2.1 + container NPU)
+<br>**→ [INSTALL-ubuntu.md](INSTALL-ubuntu.md): one-page install for Canonical Ubuntu 24.04** (IQ-8275 EVK + container NPU)
 
 </div>
 
