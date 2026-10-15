@@ -40,6 +40,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY container/requirements.txt /tmp/requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir -r /tmp/requirements.txt
 
+# qai-appbuilder's bundled QNN version MUST match the host DSP firmware's QAIRT
+# version, or the on-device HTP session is rejected (openSessionForPriority
+# status=0x72) and the NPU silently falls back to CPU. requirements.txt pins the
+# value for the QLI 2.1 board (QAIRT 2.50.0 -> 2.50.40). Other boards ship other
+# firmware (e.g. the Canonical Ubuntu 24.04 IQ-8275 image ships QAIRT 2.46.0),
+# so this build-arg lets you override the pin WITHOUT editing requirements.txt:
+#   docker build --build-arg QAI_APPBUILDER_VERSION=2.46.0.1 ...
+# Leave empty to keep the requirements.txt pin. Verify your firmware with:
+#   grep -ao 'v2\.[0-9]*\.[0-9]*' .../dsp/cdsp/libQnnHtpV75.so | sort -u
+ARG QAI_APPBUILDER_VERSION=
+RUN if [ -n "$QAI_APPBUILDER_VERSION" ]; then \
+      pip3 install --break-system-packages --no-cache-dir \
+        "qai-appbuilder==$QAI_APPBUILDER_VERSION"; \
+    fi
+
 WORKDIR /app
 COPY doorbell.py /app/doorbell.py
 
