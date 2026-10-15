@@ -28,6 +28,14 @@ the box. Unzip it:
 unzip qli-2.1.1-qcom-multimedia-image.zip
 ```
 
+> **Both multimedia images work, identically.** This demo was verified end-to-end
+> on *both* the standard `qcom-multimedia-image` and the
+> `qcom-multimedia-proprietary-image` for the IQ-8275 EVK — same QAIRT (Qualcomm
+> AI Runtime SDK) 2.50.0 firmware, same DSP runtime path, same four commands in
+> §4. The run wrapper auto-detects everything that differs between the two builds
+> (device-node group IDs, the on-SoC DSP directory, the USB camera's `/dev/video*`
+> node), so **no change is needed to run on either image.**
+
 ## 2. Install (flash) the image
 
 Flash the unzipped image set to the EVK over USB in **EDL (Emergency Download)
