@@ -151,24 +151,25 @@ runtime hot path. The host-side model conversion needs `qai-hub` (`pip3 install 
 ### 2.3 — Prepare the models
 
 The CPU backend needs only the two ONNX files; the NPU backend needs the compiled HTP context
-binaries. The full pipeline — ONNX export → AI Hub W8A16 quantize/compile → `qnn-context-binary-generator`
-— is documented in **[models/README.md](models/README.md)**. In short:
+binaries.
+
+**NPU binaries are pre-built in the repo.** The two HTP v75 context binaries are committed under
+[`qnn_context/`](qnn_context/) (~5 MB, pinned to the QCS8275 + its QAIRT version), so after a
+clone they are already present — the container wrappers mount them automatically and the
+bare-metal path finds them if you copy them to `~/qnn_context`. **For the container demo there is
+nothing to stage.** To regenerate them (e.g. for a different SoC/HTP), the pipeline is ONNX
+export → AI Hub W8A16 quantize → compile with `--target_runtime precompiled_qnn_onnx` (extract
+`model.bin`); see **[qnn_context/README.md](qnn_context/README.md)** and
+**[models/README.md](models/README.md)**.
 
 ```bash
-# Host: produce the DLC artifacts via Qualcomm AI Hub
-export QAI_HUB_TOKEN=your_token_here          # see .env.example
-python3 aihub_compile.py                       # -> models/*_qcs8275.dlc
-
-# Board: ONNX for the CPU path
-mkdir -p ~/.insightface/models/buffalo_sc
-cp det_500m.onnx w600k_mbf.onnx ~/.insightface/models/buffalo_sc/
-
-# Board: HTP context binaries for the NPU path
+# Bare-metal NPU path: copy the committed context binaries into place
 mkdir -p ~/qnn_context
-qnn-context-binary-generator --backend /usr/lib/libQnnHtp.so \
-  --binary_file det_500m_qcs8275  --output_dir ~/qnn_context  --model <det.dlc>
-qnn-context-binary-generator --backend /usr/lib/libQnnHtp.so \
-  --binary_file w600k_mbf_qcs8275 --output_dir ~/qnn_context  --model <rec.dlc>
+cp qnn_context/*_qcs8275.bin ~/qnn_context/
+
+# CPU path: InsightFace auto-downloads buffalo_sc into ~/.insightface on first run.
+# (To stage manually/offline: put det_500m.onnx + w600k_mbf.onnx under
+#  ~/.insightface/models/buffalo_sc/.)
 ```
 
 ### 2.4 — Run
@@ -338,6 +339,7 @@ doorbell.py            The application (single file — scp to the board and run
 run_doorbell.sh        Board launcher — sets display env, keeps screen awake, single-instance
 dragonwing-doorbell-npu.desktop  GNOME desktop icon that one-click-launches the NPU backend
 container/             Dockerized Stage 2 — Dockerfile, requirements, CDI for HTP v75, run wrapper
+qnn_context/           Pre-built HTP v75 NPU context binaries (*.bin, committed) + how they're made
 aihub_compile.py       Host: ONNX -> AI Hub W8A16 quantize + HTP v75 compile -> DLC
 benchmark.py           CPU vs NPU latency benchmark
 tools/
@@ -357,7 +359,7 @@ assets/                Dragonwing brand references + sample LinkedIn QR
 |---------|-------------|
 | `libQnnHtp.so: cannot open shared object file` | Use the correct path: `/usr/lib/libQnnHtp.so` (not `/usr/lib/aarch64-linux-gnu/`). Find it with `find /usr -name libQnnHtp.so`. |
 | `No module named 'qai_appbuilder'` at NPU startup | The in-process NPU runtime isn't installed. `pip3 install --break-system-packages qai-appbuilder` (§2.2.1). The CPU backend still runs without it. |
-| NPU "context binaries missing" at startup | `~/qnn_context/det_500m_qcs8275.bin` / `w600k_mbf_qcs8275.bin` not present — run `qnn-context-binary-generator` (§2.3). |
+| NPU "context binaries missing" at startup | `~/qnn_context/det_500m_qcs8275.bin` / `w600k_mbf_qcs8275.bin` not present. The pre-built binaries ship in the repo under `qnn_context/`; copy them to `~/qnn_context/` for the bare-metal path (the container mounts them directly). To rebuild, see §2.3. |
 | Window never appears over SSH | The app sets `DISPLAY=:0` and discovers the GNOME Xwayland auth from `/run/user/1000/.mutter-Xwaylandauth.*`. Make sure you're logged into the desktop session on the board. |
 | No camera / black feed | Check `v4l2-ctl --list-devices`; the app probes `/dev/video0`–`video5` and uses the first that yields a frame, falling back to synthetic frames if none work. (A USB camera that re-enumerates to a new index after replug is handled automatically.) |
 | NPU backend seems to use the CPU | The Python QNNExecutionProvider silently falls back to CPU on this board — that's why the NPU path drives the HTP in-process via `qai-appbuilder`, not ORT. If FPS and CPU load look identical to CPU mode, confirm you launched with `--backend npu`, that `qai-appbuilder` imports, and the context binaries exist. |

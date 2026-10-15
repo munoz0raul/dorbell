@@ -74,18 +74,23 @@ docker build -t dragonwing-doorbell -f container/Dockerfile .
 The aarch64 wheels (insightface, onnxruntime, opencv, qai-appbuilder) take a few
 minutes to install on the first build.
 
-### 4. Make sure the models are present on the host
+### 4. Models — committed for NPU, auto-downloaded for CPU
 
-They are large, board-specific, and gitignored, so they are **mounted at runtime**,
-never baked into the image (matching how the bare-metal path finds them under
-`$HOME`):
+The NPU HTP context binaries are **committed to the repo** under
+[`qnn_context/`](../qnn_context/) (only ~5 MB, SoC-pinned), so after `git clone`
+they are already present — the wrapper mounts them automatically. **Nothing to
+stage for the NPU path.** The CPU ONNX models are **not** committed: InsightFace
+auto-downloads `buffalo_sc` into `~/.insightface` on first use.
 
 ```
-~/qnn_context/det_500m_qcs8275.bin      ~/qnn_context/w600k_mbf_qcs8275.bin     # NPU
-~/.insightface/models/buffalo_sc/det_500m.onnx  …/w600k_mbf.onnx                # CPU
+qnn_context/det_500m_qcs8275.bin   qnn_context/w600k_mbf_qcs8275.bin   # NPU — committed in-repo
+~/.insightface/models/buffalo_sc/*.onnx                                # CPU — auto-downloaded
 ```
 
-See the main [README](../README.md) §2.3 for how these are produced.
+To use **freshly regenerated** NPU binaries instead of the committed ones, stage
+them at `~/qnn_context/` — the wrapper prefers that over the repo copy. See
+[`qnn_context/README.md`](../qnn_context/README.md) for how the binaries are
+produced and the main [README](../README.md) §2.3.
 
 ## Run
 
@@ -102,7 +107,9 @@ and the present `/dev/video*` nodes at runtime, and starts the container with:
 - `--device qualcomm.com/device=cdi-hw-acc` — the NPU, via the CDI
 - the USB camera nodes + `--group-add` for their restricted groups
 - the host Xwayland socket (`/tmp/.X11-unix` + `/run/user/1000`) and auth cookie, with `DISPLAY=:0`
-- the model directories mounted read-only under `/root`
+- the model directories mounted read-only under `/root` (the committed
+  `qnn_context/`, or `~/qnn_context` if you staged your own; plus `~/.insightface`
+  if present)
 
 The controls (`O` enroll, `B` backend toggle, `[`/`]` timeout, `q`/ESC quit, …)
 are identical to bare metal — see main README §2.5.

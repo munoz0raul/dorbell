@@ -33,9 +33,27 @@ elif [ "$(id -u)" = 0 ] && [ -d /home/ubuntu ]; then
 else
     USER_HOME=$HOME
 fi
-if [ ! -d "$USER_HOME/qnn_context" ] && [ ! -d "$USER_HOME/.insightface" ]; then
-    echo "WARNING: no models under $USER_HOME (qnn_context/.insightface). Run as the" >&2
-    echo "         login user, or put the models there. NPU will fail to load." >&2
+
+# --- NPU context binaries: repo-committed by default, user-staged if present --
+# The ~5 MB *.bin HTP context binaries are COMMITTED to the repo under
+# qnn_context/, so a fresh `git clone` reproduces the NPU demo with no model
+# staging. Prefer a user-staged $USER_HOME/qnn_context when present (e.g. freshly
+# regenerated .bin); otherwise fall back to the repo copy. The CPU .insightface
+# ONNX models are NOT committed -- insightface auto-downloads buffalo_sc on first
+# run; the mount below is added only if that tree already exists on the host.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+if [ -d "$USER_HOME/qnn_context" ]; then
+    QNN_CONTEXT_DIR="$USER_HOME/qnn_context"
+elif [ -d "$REPO_ROOT/qnn_context" ]; then
+    QNN_CONTEXT_DIR="$REPO_ROOT/qnn_context"
+    echo "NPU context binaries: using repo-committed $QNN_CONTEXT_DIR"
+else
+    QNN_CONTEXT_DIR="$USER_HOME/qnn_context"   # non-existent; warn below
+fi
+if [ ! -d "$QNN_CONTEXT_DIR" ] && [ ! -d "$USER_HOME/.insightface" ]; then
+    echo "WARNING: no models found (qnn_context/.insightface). Run as the login" >&2
+    echo "         user, or stage the models. NPU will fail to load." >&2
 fi
 
 # --- Host display: same keep-awake dance as the bare-metal launcher -----------
@@ -75,6 +93,12 @@ for n in 0 1 2 3; do
 done
 
 echo "Starting container '$NAME' with backend=$BACKEND ..."
+
+# --- Model mounts: NPU .bin (repo-committed or user-staged) + optional CPU ONNX
+MODEL_MOUNT_ARGS=()
+[ -d "$QNN_CONTEXT_DIR" ]           && MODEL_MOUNT_ARGS+=(-v "$QNN_CONTEXT_DIR":/root/qnn_context:ro)
+[ -d "$USER_HOME/.insightface" ]    && MODEL_MOUNT_ARGS+=(-v "$USER_HOME/.insightface":/root/.insightface:ro)
+
 exec docker run --rm --name "$NAME" \
     --device qualcomm.com/device=cdi-hw-acc \
     "${CAM_ARGS[@]}" \
@@ -86,6 +110,5 @@ exec docker run --rm --name "$NAME" \
     -v "$AUTH":/tmp/xauth:ro \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v /run/user/1000:/run/user/1000 \
-    -v "$USER_HOME/qnn_context":/root/qnn_context:ro \
-    -v "$USER_HOME/.insightface":/root/.insightface:ro \
+    "${MODEL_MOUNT_ARGS[@]}" \
     "$IMAGE" --backend "$BACKEND"
