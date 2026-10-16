@@ -131,3 +131,16 @@ Env overrides: `WESTON_UID` (default: owner of `/tmp/.X11-unix/X0`),
 - **`[NPU] ERROR: context binaries missing`.** The `*.bin` files aren't under
   `$MODELS_HOME/qnn_context` — stage them (see **Models** above). CPU backend
   works without them.
+- **`B`→CPU does nothing / `[CPU] InsightFace unavailable: [Errno 13] Permission
+  denied: '/models/.insightface'`.** The CPU `buffalo_sc` ONNX models are **not**
+  committed to the repo (only the NPU `.bin` are), so InsightFace auto-downloads
+  them on the first CPU toggle. On QLI the container runs as **uid 1000** with
+  `HOME=/models`, so its `~/.insightface` must be a **writable** host dir for that
+  download to land — a read-only or root-owned mount triggers exactly this error
+  and the CPU engine stays unavailable (NPU is unaffected). The wrapper now
+  creates `$MODELS_HOME/.insightface` and mounts it **read-write**, so the first
+  `B`→CPU toggle self-downloads `buffalo_sc` (needs outbound internet) and later
+  runs reuse it. To preseed offline, drop the ONNX files under
+  `$MODELS_HOME/.insightface/models/buffalo_sc` before running. If you still see
+  the error, check the dir is writable by uid 1000 (`ls -ld
+  $MODELS_HOME/.insightface`).

@@ -49,7 +49,9 @@
 #   - Image built:    docker build -t dragonwing-doorbell -f ../Dockerfile <repo-root>
 #   - Models present on the host (any readable location; default /root):
 #       $MODELS_HOME/qnn_context/{det_500m,w600k_mbf}_qcs8275.bin   (NPU HTP)
-#       $MODELS_HOME/.insightface/models/buffalo_sc/*.onnx          (CPU)
+#       $MODELS_HOME/.insightface/models/buffalo_sc/*.onnx          (CPU; auto-
+#         downloaded on first `B`->CPU toggle if absent -- the wrapper creates a
+#         writable ~/.insightface for the uid-1000 container to download into)
 #
 # Usage: bash run_doorbell_container_qli.sh [cpu|npu]   (default: npu)
 #   Env overrides: WESTON_UID (default auto-detected), MODELS_HOME (default: the
@@ -158,10 +160,23 @@ fi
 echo "Starting container '$NAME' backend=$BACKEND as uid=$WESTON_UID (QLI/Weston host) ..."
 [ -n "$DSP_CDSP_DIR" ] && echo "  DSP runtime: $DSP_CDSP_DIR -> /usr/lib/dsp/cdsp"
 
-# --- Model mounts: NPU .bin (repo-committed or user-staged) + optional CPU ONNX
+# --- Model mounts: NPU .bin (repo-committed or user-staged) + CPU ONNX ---------
+# The CPU buffalo_sc ONNX models are NOT committed (only the NPU .bin are), so on
+# a fresh board they are absent. InsightFace auto-downloads them on first CPU use
+# -- but the container runs as uid 1000 with HOME=/models, so its ~/.insightface
+# must be a WRITABLE host dir owned-or-world-writable for that download to land
+# (a read-only or root-owned mount is why `B`->CPU failed with
+# `Permission denied: '/models/.insightface'`). Create it if absent, make it
+# writable by the container uid, and mount it read-write. First CPU toggle then
+# downloads buffalo_sc (needs internet); subsequent runs reuse it. To preseed
+# offline, drop the ONNX files under $MODELS_HOME/.insightface/models/buffalo_sc.
+INSIGHTFACE_DIR="$MODELS_HOME/.insightface"
+mkdir -p "$INSIGHTFACE_DIR/models"
+chmod -R a+rwX "$INSIGHTFACE_DIR" 2>/dev/null || true
+
 MODEL_MOUNT_ARGS=()
-[ -d "$QNN_CONTEXT_DIR" ]        && MODEL_MOUNT_ARGS+=(-v "$QNN_CONTEXT_DIR":/models/qnn_context:ro)
-[ -d "$MODELS_HOME/.insightface" ] && MODEL_MOUNT_ARGS+=(-v "$MODELS_HOME/.insightface":/models/.insightface:ro)
+[ -d "$QNN_CONTEXT_DIR" ] && MODEL_MOUNT_ARGS+=(-v "$QNN_CONTEXT_DIR":/models/qnn_context:ro)
+MODEL_MOUNT_ARGS+=(-v "$INSIGHTFACE_DIR":/models/.insightface)   # rw: CPU self-download
 
 exec docker run --rm --name "$NAME" \
     --user "${WESTON_UID}:${WESTON_UID}" \
