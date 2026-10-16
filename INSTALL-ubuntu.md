@@ -160,7 +160,24 @@ ls /usr/lib/aarch64-linux-gnu/libcdsprpc.so*  # -> present
 ```bash
 sudo apt install -y docker.io
 sudo usermod -aG docker "$USER"
-# log out and back in (or: newgrp docker) so the group takes effect
+```
+
+**The `docker` group only applies to new login sessions**, so your *current*
+shell still can't talk to the Docker daemon — a build run now fails with
+`permission denied while trying to connect to the docker API at
+unix:///var/run/docker.sock`. Activate the group before building, either by
+logging out and back in (`exit` the SSH session and reconnect) or, in the current
+shell:
+
+```bash
+newgrp docker
+```
+
+Verify the group took effect and the daemon is reachable:
+
+```bash
+id -nG | tr ' ' '\n' | grep -x docker      # -> docker
+docker info >/dev/null && echo "docker OK"  # -> docker OK
 ```
 
 ## 6. Fetch the repo, install the CDI, build, and run
@@ -187,6 +204,10 @@ cd ~/dorbell
 docker build -t dragonwing-doorbell -f container/Dockerfile .
 # Use the PLAIN build -- NO --build-arg. The default 2.50.x qai-appbuilder
 # matches the committed .bin and loads on this 2.46-firmware board.
+# (A "legacy builder is deprecated / install buildx" warning is harmless --
+# the classic builder still builds this image fine. If you instead get
+# `permission denied ... docker.sock`, the docker group hasn't taken effect
+# in this shell -- see the end of §5.)
 
 # --- 6.4  Run the NPU demo (full-screen on HDMI) ---
 cd ~/dorbell
@@ -239,9 +260,17 @@ docker rm -f dragonwing-doorbell
 ## Troubleshooting
 
 The container deltas vs bare metal (display auth, camera node, the HTP enablement
-barriers) are in [`container/README.md`](container/README.md). The three most
+barriers) are in [`container/README.md`](container/README.md). The most
 common Ubuntu first-run snags:
 
+- **`docker build` fails with `permission denied while trying to connect to the
+  docker API at unix:///var/run/docker.sock`** (often with trailing
+  `Can't add file … closed pipe` noise). The `docker` group added in §5 hasn't
+  taken effect in your current shell — group changes only apply to new login
+  sessions. Run `newgrp docker` (or log out and back in), confirm with
+  `id -nG | grep -w docker` and `docker info`, then rebuild. The separate
+  `legacy builder is deprecated / install buildx` message is only a warning — the
+  build still succeeds.
 - **`install_cdi.py` prunes `libcdsprpc.so` / `libdmabufheap.so.0`.** You skipped
   §4 — the Canonical image ships without the FastRPC/QNN runtime. Install the PPA
   stack and re-run the installer (`sudo rm -f /etc/cdi/cdi-hw-acc.json` first).
