@@ -146,13 +146,31 @@ sudo apt install -y qcom-fastrpc1 qcom-libdmabufheap qairt-libs qairt-dsp-binari
 sudo usermod -aG fastrpc,dmaheap "$USER"      # log out/in for the groups to take effect
 ```
 
-This brings `/usr/lib/aarch64-linux-gnu/lib{cdsp,adsp}rpc.so*` and
-`libdmabufheap.so.0`, creates the `fastrpc` and `dmaheap` groups, and sets
-`/dev/fastrpc-cdsp` to `fastrpc:fastrpc 0664`. Verify:
+**Then create the unversioned FastRPC library symlinks** — this step is easy to
+miss and silently breaks the NPU. The Ubuntu `qcom-fastrpc1` package installs only
+the *versioned* runtime SONAMEs (`libcdsprpc.so.1`, `libadsprpc.so.1`), but the
+CDSP (Compute DSP) runtime `dlopen`s the libraries by their **unversioned** names
+(`libcdsprpc.so`, `libadsprpc.so`). Without these symlinks the unversioned name
+doesn't exist on the host, so `install_cdi.py` (§6) prunes those two mounts, the
+FastRPC stub fails to load inside the container (`loadRemoteSymbols failed err
+4000` / `Transport layer setup failed: 14001`), and the NPU **silently falls back
+to CPU** (telltale: `load 6ms` instead of a few hundred ms). Create them:
 
 ```bash
-ls -l /dev/fastrpc-cdsp                       # -> crw-rw-r-- fastrpc fastrpc
-ls /usr/lib/aarch64-linux-gnu/libcdsprpc.so*  # -> present
+sudo ln -sf libcdsprpc.so.1 /usr/lib/aarch64-linux-gnu/libcdsprpc.so
+sudo ln -sf libadsprpc.so.1 /usr/lib/aarch64-linux-gnu/libadsprpc.so
+```
+
+This brings `/usr/lib/aarch64-linux-gnu/lib{cdsp,adsp}rpc.so*` and
+`libdmabufheap.so.0`, creates the `fastrpc` and `dmaheap` groups, and sets
+`/dev/fastrpc-cdsp` to `fastrpc:fastrpc 0664`. Verify — note the **exact**
+unversioned path must exist (a plain `libcdsprpc.so*` glob would also match the
+`.so.1` and hide a missing symlink):
+
+```bash
+ls -l /dev/fastrpc-cdsp                            # -> crw-rw-r-- fastrpc fastrpc
+ls -l /usr/lib/aarch64-linux-gnu/libcdsprpc.so     # -> symlink to libcdsprpc.so.1
+ls -l /usr/lib/aarch64-linux-gnu/libadsprpc.so     # -> symlink to libadsprpc.so.1
 ```
 
 ## 5. Install Docker
@@ -197,7 +215,9 @@ cd ~/dorbell/container
 sudo rm -f /etc/cdi/cdi-hw-acc.json                 # the installer refuses to overwrite
 sudo python3 cdi/install_cdi.py --file cdi/cdi-hw-acc-8275.json
 # After §4 this should report NO missing mounts. If it prunes libcdsprpc.so /
-# libdmabufheap.so.0, you skipped §4 -- install the PPA stack and re-run.
+# libadsprpc.so, you skipped the unversioned-symlink step in §4 -- create the
+# symlinks and re-run (sudo rm -f /etc/cdi/cdi-hw-acc.json first). If it prunes
+# libdmabufheap.so.0, you skipped the PPA install in §4.
 
 # --- 6.3  Build the image (from the repo root, so doorbell.py is in the build context) ---
 cd ~/dorbell
@@ -271,9 +291,32 @@ common Ubuntu first-run snags:
   `id -nG | grep -w docker` and `docker info`, then rebuild. The separate
   `legacy builder is deprecated / install buildx` message is only a warning — the
   build still succeeds.
-- **`install_cdi.py` prunes `libcdsprpc.so` / `libdmabufheap.so.0`.** You skipped
-  §4 — the Canonical image ships without the FastRPC/QNN runtime. Install the PPA
-  stack and re-run the installer (`sudo rm -f /etc/cdi/cdi-hw-acc.json` first).
+- **`[NPU] ... ready  (load 6ms)` with `loadRemoteSymbols failed err 4000` /
+  `Transport layer setup failed: 14001` / `Failed to create device` above it, and
+  it runs on CPU.** The FastRPC stub couldn't load `libcdsprpc.so` inside the
+  container. Almost always the **unversioned symlink** is missing: the Ubuntu
+  `qcom-fastrpc1` package ships only `libcdsprpc.so.1` (not the unversioned
+  `libcdsprpc.so` the CDSP runtime `dlopen`s), so `install_cdi.py` pruned the
+  mount. Create the symlinks from §4 and reinstall the CDI:
+  ```bash
+  sudo ln -sf libcdsprpc.so.1 /usr/lib/aarch64-linux-gnu/libcdsprpc.so
+  sudo ln -sf libadsprpc.so.1 /usr/lib/aarch64-linux-gnu/libadsprpc.so
+  sudo rm -f /etc/cdi/cdi-hw-acc.json
+  sudo python3 ~/dorbell/container/cdi/install_cdi.py --file ~/dorbell/container/cdi/cdi-hw-acc-8275.json
+  ```
+  Confirm the fix inside the container (no `No such file`, no `=> not found`):
+  ```bash
+  docker run --rm --device qualcomm.com/device=cdi-hw-acc --entrypoint bash \
+    dragonwing-doorbell -c 'ldd /usr/lib/aarch64-linux-gnu/libcdsprpc.so'
+  ```
+  A healthy run then shows `load` in the **hundreds of ms** and holds
+  `/dev/fastrpc-cdsp` + `/dev/dma_heap/system` open (`sudo ls -l /proc/$(docker
+  inspect -f '{{.State.Pid}}' dragonwing-doorbell)/fd | grep -E 'fastrpc|dma'`).
+- **`install_cdi.py` prunes `libcdsprpc.so` / `libadsprpc.so` /
+  `libdmabufheap.so.0`.** You skipped part of §4 — the Canonical image ships
+  without the FastRPC/QNN runtime, and even after the PPA install the *unversioned*
+  `lib{cdsp,adsp}rpc.so` symlinks must be created by hand (see §4). Fix §4, then
+  re-run the installer (`sudo rm -f /etc/cdi/cdi-hw-acc.json` first).
 - **`[NPU] ... ready` but `Using newer context binary on old SDK` / `err 5000` /
   `Failed to create context from binary 0x1388` above it.** The image's
   `qai-appbuilder` host SDK is **older** than the SDK that generated the `.bin`

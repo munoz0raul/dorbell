@@ -66,7 +66,18 @@ sudo apt install -y qcom-fastrpc1 qcom-libdmabufheap qairt-libs qairt-dsp-binari
 
 This brings `/usr/lib/aarch64-linux-gnu/lib{cdsp,adsp}rpc.so*` and
 `libdmabufheap.so.0`, creates the `fastrpc` and `dmaheap` groups, and sets
-`/dev/fastrpc-cdsp` to `fastrpc:fastrpc 0664`. Add yourself to the groups (the
+`/dev/fastrpc-cdsp` to `fastrpc:fastrpc 0664`. **Then create the unversioned
+FastRPC symlinks** — `qcom-fastrpc1` installs only the versioned `*.so.1`, but the
+CDSP runtime `dlopen`s the unversioned name; without these the CDI prunes the
+mount and the NPU silently falls back to CPU (`loadRemoteSymbols failed err 4000`,
+`load 6ms`):
+
+```bash
+sudo ln -sf libcdsprpc.so.1 /usr/lib/aarch64-linux-gnu/libcdsprpc.so
+sudo ln -sf libadsprpc.so.1 /usr/lib/aarch64-linux-gnu/libadsprpc.so
+```
+
+Add yourself to the groups (the
 run wrapper passes them to the container, but you need them to probe on the host):
 
 ```bash
@@ -201,11 +212,16 @@ are identical to bare metal — see main README §2.5.
   /etc/cdi/cdi-hw-acc.json` first).
 - **HTP falls back to CPU (`loadRemoteSymbols failed err 4000`, `Failed to create
   transport`).** This is almost always a missing userspace library, *not* a
-  permissions problem — `--privileged` / `--pid=host` do **not** fix it. The usual
-  cause is `libdmabufheap.so.0` not reaching the container (the CDI mounts it); run
+  permissions problem — `--privileged` / `--pid=host` do **not** fix it. Run
   `docker run --rm --device qualcomm.com/device=cdi-hw-acc dragonwing-doorbell` with
-  `--entrypoint bash` and `ldd /usr/lib/aarch64-linux-gnu/libcdsprpc.so` — any
-  `=> not found` is the culprit. Note that `QNNContext()` prints `[NPU] ... ready`
+  `--entrypoint bash` and `ldd /usr/lib/aarch64-linux-gnu/libcdsprpc.so` — a
+  `No such file or directory` means the lib never reached the container, and any
+  `=> not found` names a missing dependency. Two common causes on **Canonical
+  Ubuntu**: (1) the unversioned `libcdsprpc.so`/`libadsprpc.so` symlinks were never
+  created — `qcom-fastrpc1` ships only `*.so.1`, so `install_cdi.py` pruned the
+  mount (fix: `sudo ln -sf libcdsprpc.so.1 .../libcdsprpc.so` + same for adsprpc,
+  then reinstall the CDI); (2) `libdmabufheap.so.0` not reaching the container.
+  Note that `QNNContext()` prints `[NPU] ... ready`
   even when the HTP never came up, so trust the `err 4000` lines (and a near-zero
   `load Nms`) over the "ready" line. Definitive liveness check: on the host,
   `sudo ls -l /proc/<container-pid>/fd | grep fastrpc` — if the FastRPC fd is held
