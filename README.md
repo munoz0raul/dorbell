@@ -59,7 +59,8 @@ the same recognition pipeline, same models, offloaded to the NPU.
 
 This repository is the reference for a three-stage demonstration that walks from the maker
 ecosystem to a production-style embedded deployment. **Stage 2 is fully documented below**;
-Stages 1 and 3 are summarized and will be expanded.
+**Stage 1 lives in its own repo** ([munoz0raul/dorbell-app-bricks](https://github.com/munoz0raul/dorbell-app-bricks));
+Stage 3 is summarized and will be expanded.
 
 | Stage | Hardware / OS | Camera | Startup | Represents |
 |-------|---------------|--------|---------|------------|
@@ -67,11 +68,49 @@ Stages 1 and 3 are summarized and will be expanded.
 | **2** | **IQ-8275 + Ubuntu 24.04** | **USB webcam** | Manual (`python3 doorbell.py`) | **Beginning of prototyping — this guide** |
 | **3** | IQ-8275 + **QLI 2.1** | **MIPI CSI** | Automatic on boot | Advanced, production-shaped prototype |
 
-### Stage 1 — Ventuno + AppLab *(summary)*
+### Stage 1 — Ventuno + AppLab
 
-The entry point for makers: the Arduino VENTUNO Q running the model through AppLab, Qualcomm's
-guided application environment. No Linux setup, no manual model conversion — the goal is to show
-the recognition working with the least friction. *Full walkthrough to follow.*
+The entry point for makers: the Arduino **VENTUNO Q** (`arduino,monza` / QCS8300, HTP v75)
+running the doorbell through **Arduino App Lab**, Qualcomm's guided application environment. No
+Linux setup, no manual model conversion — the goal is to show recognition working with the least
+friction, and to establish the *prototyping* pattern the rest of this project builds on.
+
+**This stage lives in its own repo:
+[munoz0raul/dorbell-app-bricks](https://github.com/munoz0raul/dorbell-app-bricks)** — it follows
+the [Arduino app-bricks-examples](https://github.com/arduino/app-bricks-examples) convention, so it
+can drop straight into an App Lab apps directory.
+
+**How the prototype reuses this production code.** The App Lab app does **not** fork the doorbell —
+it *imports* it. `python/doorbell_core.py` in that repo is a **byte-for-byte snapshot** of this
+repo's `doorbell.py`: the UI, the state machine, QR-triggered enrollment, and the 2-minute TTL store
+are all identical. Only the **two I/O ends** are swapped to fit the App Lab world:
+
+| End | Production (this repo, Stage 2/3) | Prototype (App Lab, Stage 1) |
+|-----|-----------------------------------|------------------------------|
+| **Inference** | in-process `NpuFaceEngine` (qai-appbuilder → HTP v75) | the app-local `arduino:face_recognition` **brick** → a companion NPU **runner** container (onnxruntime-qnn → HTP v75) |
+| **Display** | `cv2.imshow()` on HDMI/Xwayland | the composited canvas JPEG-streamed into the `arduino:web_ui` webview (`:7000`); keys come back over the same Socket.IO channel |
+
+Everything between those two ends is `doorbell_core`, unchanged — which is the whole point: the
+prototype and the production app stay in lockstep because they share the same source.
+
+**What's in the dorbell-app-bricks repo:**
+
+- `inspirational/platform_ventunoq/dragonwing-doorbell/` — the App Lab app (`app.yaml` declaring the
+  `arduino:face_recognition` + `arduino:web_ui` bricks, `python/`, `assets/`, `run_applab.sh`).
+- `runner/` — the NPU inference container behind the custom brick (InsightFace `buffalo_sc` on the
+  HTP v75 via `onnxruntime-qnn`, which bundles its own board-matched QNN runtime).
+- `install-bricks.md` — a step-by-step guide taking a fresh Ubuntu + App Lab Ventuno Q to a running
+  doorbell.
+
+**The one non-obvious bit** (documented in full over there): a plain `arduino-app-cli app start`
+fails with `Brick "arduino:face_recognition" Not Found`, because the custom brick lives *inside* the
+app and so is absent from App Lab's static brick registry. The included `run_applab.sh` fixes this
+without editing any stock file — it builds a private data dir (`ARDUINO_APP_CLI__DATA_DIR`) whose
+registry = stock + our brick, regenerated with the same provisioner the daemon uses.
+
+> **Status:** running on the board (verified 2026-10-18). Both containers start, the runner comes up
+> on `QNNExecutionProvider` (HTP v75), and the webview streams the live canvas end-to-end. See the
+> [dorbell-app-bricks README](https://github.com/munoz0raul/dorbell-app-bricks) for the full build.
 
 ### Stage 3 — IQ-8 + MIPI CSI + QLI 2.1 + autostart *(summary)*
 
