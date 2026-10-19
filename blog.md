@@ -83,53 +83,107 @@ Two things get solved properly at this stage:
 
 Finally we land on **Qualcomm Linux (QLI) 2.1**, the **Yocto-based distribution a commercial
 Dragonwing product actually ships**. The container image from Stage 2 runs here *byte-for-byte
-identical*. What changes is everything *beneath* it — and that delta is precisely the point of the
-stage. This is where you stop *using* someone else's operating system and start *managing your own
-distribution.*
+identical*. What changes is everything *beneath* it.
 
-QLI is not Ubuntu, and the differences are not cosmetic:
+**But first — why move at all? Ubuntu works. Why not ship that?**
+
+This is the question the whole stage exists to answer, and it's worth being blunt about, because
+"Ubuntu runs the demo fine" is true and still the wrong thing to ship. Four reasons, and none of them
+are about the application:
+
+- **Ubuntu is someone else's image.** The Ubuntu-for-Dragonwing build is composed by Canonical and
+  Qualcomm; you take it as given. You can `apt install` *on top*, but the base — the kernel, the init
+  system, the hundreds of packages, the bundled DSP firmware — is not yours to strip, pin, or audit.
+  You are renting an operating system, and a product you can't fully account for is a product you
+  can't fully support.
+- **`apt` gives you a different machine every time.** `apt install insightface onnxruntime` today and
+  in six months resolve to different dependency trees. A fleet built across a year of manufacturing is
+  a fleet of subtly *different* systems, and there is no single artifact that says "this is the OS we
+  ship." Reproducibility isn't a nice-to-have here — it's the thing every later guarantee (a signed
+  OTA, an SBOM, a CVE answer) is built on, and `apt` can't provide it.
+- **The firmware you depend on moves on someone else's schedule.** The NPU only works when the host
+  DSP firmware's QAIRT version matches the runtime in the container — we hit exactly this in Stage 2.
+  On Ubuntu that firmware ships *inside the base image*, on Canonical's cadence; a routine base update
+  can silently shift it out from under you and turn every doorbell in the field into a CPU-fallback
+  that no longer tracks a face. You cannot build a product on a dependency you don't version.
+- **A desktop distro is the wrong shape for an appliance.** Ubuntu carries a display manager, a
+  package manager, dozens of services a doorbell will never use — more to boot, more to patch, more
+  attack surface, bigger update payloads. And it is built to be *mutated in place* (`apt upgrade`),
+  which is the opposite of what a field appliance needs: an immutable, atomically-swappable,
+  rollback-able image.
+
+**Yocto answers all four because the image is a *function of a manifest.*** You don't install QLI,
+you *compile* it — from a manifest that pins the kernel, the BSP (Board Support Package), the DSP
+firmware, the QAIRT version, and your app as one coherent, signed, reproducible release. Same
+manifest in, same image out, byte-for-byte, forever. You include exactly what the doorbell needs and
+nothing else. You own every version in the stack, so nothing shifts underneath you. And
+appliance-shaping — read-only rootfs, A/B partitions, dm-verity, secure boot — integrates as
+first-class layers instead of fragile bolt-ons. That is the whole trade: you give up Ubuntu's
+*"it already works"* for a distribution you can *account for, reproduce, and defend.*
+
+**And this is why the Ubuntu→QLI deltas are the point, not a detour.** QLI is not Ubuntu, and the
+differences are not cosmetic — they're the moment the ownership becomes concrete. Each one is
+something Ubuntu's general-purpose image *handled for you*, which sounds like a gift until you realize
+it means you never controlled it:
 
 - The display server is **Weston**, not GNOME. Its bundled Xwayland authorizes clients by **matching
   UID** over the X11 socket — there is no `.Xauthority` cookie file to mount. So the container runs as
-  `--user 1000:1000` (the Weston UID), and UID-match *is* the authentication.
+  `--user 1000:1000` (the Weston UID), and UID-match *is* the authentication. *(On Ubuntu, GNOME
+  invented and managed that cookie for you; now the display auth model is yours to choose.)*
 - Libraries live in a **flat `/usr/lib`**, not Ubuntu's multiarch `/usr/lib/aarch64-linux-gnu`. The
-  QLI CDI bind-maps each host library to the path the `ubuntu:24.04` container expects.
+  QLI CDI bind-maps each host library to the path the `ubuntu:24.04` container expects. *(The
+  filesystem layout was never Ubuntu's promise to keep — you just never had to think about it.)*
 - The on-SoC DSP (Digital Signal Processor) firmware ships a **specific QAIRT (Qualcomm AI Runtime)
   version** (2.50.0 on this build). A mismatched host QNN is rejected on-device and silently falls
   back to CPU — so the image pins a matching `qai-appbuilder` build, and the FastRPC DSP shell must be
-  reachable at a *hardcoded* path the wrapper bind-mounts into place.
+  reachable at a *hardcoded* path the wrapper bind-mounts into place. *(This is the firmware-cadence
+  problem from above, now solved the only durable way: you pin the firmware and the runtime together.)*
 - Device nodes injected by the CDI arrive **gid 0**, which `--group-add` can't unlock — so the
   FastRPC and DMA-heap nodes are passed as plain `--device` instead, preserving their host group IDs.
 - The USB webcam **enumerates high** (e.g. `/dev/video28`), behind ~28 on-SoC ISP (Image Signal
   Processor) and codec nodes — so the app probes the nodes actually present rather than a fixed range.
 
-Every one of those is a thing that *does not exist as a problem* on Ubuntu, and *every one of them is
-a thing you own* on a product. That's the lesson Stage 3 teaches by making you solve them: a managed
-distribution is not a free lunch, it's a responsibility you take on in exchange for control.
+Every one of those is a thing that *does not exist as a problem* on Ubuntu — because Ubuntu made the
+decision for you and hid it. On a product you *are* the one making the decision, and QLI is honest
+about that from the first boot. A managed distribution is not a free lunch; it's the responsibility
+you take on in exchange for a product you actually control. The reason to meet that responsibility
+*here*, in Stage 3, and not on day one, is the whole thesis of this journey: by now the application is
+already proven, so the only new thing you're learning is the platform.
 
 ---
 
 ## Why go in this direction at all?
 
-If App Lab gets recognition running in minutes, why climb down to Yocto and hand-authored CDIs?
+Stage 3 made the case for Yocto over Ubuntu. Zoom out and there's a bigger pattern across all three
+stages worth naming, because it's the real reason to walk them *in this order* rather than starting at
+the end.
 
-Because the three things that make a *demo* delightful are the three things that make a *product*
-impossible:
+Each stage trades **convenience for ownership**, and it does so on a curve. App Lab owns almost
+everything and asks almost nothing of you — you own only the application logic. Ubuntu hands back the
+shell, the package manager, and in-process control of the NPU, but still owns the base image. QLI
+hands back the entire stack and asks you to account for all of it. As you descend, the platform does
+less *for* you and you control more *of* it — and critically, **the cost of being wrong goes up at
+every step.** A wrong idea on App Lab costs an afternoon. A wrong architecture on QLI costs a Yocto
+rebuild, a reflash, and a day.
 
-1. **Someone else owns the OS.** App Lab (and, to a lesser degree, stock Ubuntu) decides what's
-   installed, how the display works, when things update. A commercial appliance has to own its own
-   boot chain, its own update policy, its own security posture. You cannot ship a product on a
-   platform whose rules you don't control.
+So you spend your cheap mistakes where they're cheap. The three things that make a *demo* delightful
+are precisely the three things that make a *product* impossible — and you want to have exhausted the
+first before paying for the second:
+
+1. **Someone else owns the OS.** App Lab, and to a lesser degree stock Ubuntu, decides what's
+   installed, how the display works, when things update. Wonderful for proving an idea; disqualifying
+   for a product that must own its boot chain, its update policy, and its security posture. You cannot
+   ship on a platform whose rules you don't control — but you *can* prototype on one, fast.
 2. **Nothing is reproducible by construction.** "It works on my board" is a sentence, not a build
-   system. A product needs an image you can rebuild bit-for-bit from source, on a server, on demand.
-3. **There's no story for the field.** A demo lives on one board on one desk. A product lives on
-   thousands of boards you will never physically touch again — which means updates, telemetry, and
-   security have to be designed in, not bolted on.
+   system. That's fine when the goal is to learn; it's fatal when the goal is to manufacture a
+   thousand identical units. A product needs an image you can rebuild bit-for-bit from a manifest.
+3. **There's no story for the field.** A demo lives on one board on one desk, where you are the
+   update mechanism and the security model. A product lives on thousands of boards you will never
+   touch again — so updates, telemetry, and security have to be designed in, not bolted on.
 
-Qualcomm Linux is the answer to all three *because it's Yocto*: a distribution you compile from a
-manifest, pin to exact versions, sign, and ship. The journey through App Lab and Ubuntu isn't wasted
-motion — it's the cheapest possible way to be *certain the application is right* before you pay the
-cost of owning the platform it runs on.
+The journey answers all three *in the right order*: App Lab and Ubuntu are the cheapest possible way
+to become **certain the application is right**, so that by the time you take on Yocto's cost of
+ownership, the only thing you're still figuring out is the platform — never the product.
 
 ---
 
