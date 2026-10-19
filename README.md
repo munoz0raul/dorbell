@@ -57,16 +57,30 @@ the same recognition pipeline, same models, offloaded to the NPU.
 
 ## The three demonstration stages
 
-This repository is the reference for a three-stage demonstration that walks from the maker
-ecosystem to a production-style embedded deployment. **Stage 2 is fully documented below**;
-**Stage 1 lives in its own repo** ([munoz0raul/dorbell-app-bricks](https://github.com/munoz0raul/dorbell-app-bricks));
-Stage 3 is summarized and will be expanded.
+This repository is the reference for a **three-stage demonstration** that walks the *same*
+application from the maker ecosystem to a production-shaped embedded deployment. The three stages
+are **not three different apps** — they are the same `doorbell.py` (the UI, the state machine,
+QR-triggered enrollment, the recognition pipeline) carried across three hosts, swapping only the
+**two I/O ends** (inference, display) and the **host plumbing** underneath. Each step **removes a
+layer of guard-rails and adds a layer of production-readiness.**
 
-| Stage | Hardware / OS | Camera | Startup | Represents |
-|-------|---------------|--------|---------|------------|
-| **1** | Arduino VENTUNO Q + **AppLab** | — | AppLab | Maker ecosystem; the start of the journey |
-| **2** | **IQ-8275 + Ubuntu 24.04** | **USB webcam** | Manual (`python3 doorbell.py`) | **Beginning of prototyping — this guide** |
-| **3** | IQ-8275 + **QLI 2.1** | **MIPI CSI** | Automatic on boot | Advanced, production-shaped prototype |
+**All three run today.** This repo is the home of **Stages 2 and 3**; **Stage 1 lives in its own
+repo** ([munoz0raul/dorbell-app-bricks](https://github.com/munoz0raul/dorbell-app-bricks)).
+
+| Stage | Hardware / OS | Camera | Startup | What it represents | Where it lives |
+|-------|---------------|--------|---------|--------------------|----------------|
+| **1** | Arduino **VENTUNO Q** + **App Lab** | USB webcam | App Lab **Run** button | **Maker ecosystem** — guided env, zero Linux setup; prove the idea with the least friction | [dorbell-app-bricks](https://github.com/munoz0raul/dorbell-app-bricks) |
+| **2** | **IQ-8275** + **Ubuntu 24.04** | USB webcam | Manual, then container | **Prototyping on production silicon** — full control on a familiar OS; bare-metal for fast iteration, then a reproducible Docker image | **this repo** — [§2](#stage-2--full-reproduction-guide-iq-8275--ubuntu--usb-webcam--hdmi), [`container/`](container/), [INSTALL-ubuntu.md](INSTALL-ubuntu.md) |
+| **3** | **IQ-8275** + **QLI 2.1** (Qualcomm Linux) | USB webcam | Container on the managed distro | **Managing your distribution** — the Yocto-based distro you actually ship; appliance-shaped and reproducible | **this repo** — [INSTALL.md](INSTALL.md), [`container/qli/`](container/qli/README.md) |
+
+**The journey.** Stage 1 is the **on-ramp**: an Arduino board and App Lab hide the Linux entirely,
+so a maker gets recognition on-screen in minutes — but you don't own the OS and can't ship it.
+Stage 2 moves onto the **real production silicon** (the QCS8275) under plain **Ubuntu**, where you
+have full control and the fastest iteration loop; containerizing it there is the first step toward a
+reproducible artifact. Stage 3 lands on **Qualcomm Linux (QLI)** — the Yocto-based distribution a
+commercial product actually ships — where the board boots like an **appliance** and the image is
+something you *build and manage*, not just install onto. Same recognition code the whole way down;
+only the ground beneath it hardens.
 
 ### Stage 1 — Ventuno + AppLab
 
@@ -104,19 +118,42 @@ prototype and the production app stay in lockstep because they share the same so
 
 **The one non-obvious bit** (documented in full over there): a plain `arduino-app-cli app start`
 fails with `Brick "arduino:face_recognition" Not Found`, because the custom brick lives *inside* the
-app and so is absent from App Lab's static brick registry. The included `run_applab.sh` fixes this
-without editing any stock file — it builds a private data dir (`ARDUINO_APP_CLI__DATA_DIR`) whose
-registry = stock + our brick, regenerated with the same provisioner the daemon uses.
+app and so is absent from App Lab's static brick registry. The repo ships **two** fixes:
+`install-brick.sh` registers the brick into App Lab's stock registry so the **App Lab UI's Run/Stop
+buttons work and the kiosk auto-opens the webview** (like a built-in example), while `run_applab.sh`
+launches from a **private data dir** that leaves every stock file untouched (strict isolation). Both
+regenerate the brick entry with the same provisioner the daemon uses — no hand-authored YAML.
 
 > **Status:** running on the board (verified 2026-10-18). Both containers start, the runner comes up
 > on `QNNExecutionProvider` (HTP v75), and the webview streams the live canvas end-to-end. See the
 > [dorbell-app-bricks README](https://github.com/munoz0raul/dorbell-app-bricks) for the full build.
 
-### Stage 3 — IQ-8 + MIPI CSI + QLI 2.1 + autostart *(summary)*
+### Stage 3 — IQ-8275 + QLI 2.1 (managing your distribution)
 
-The production-shaped prototype: the same application on **QLI 2.1** (Qualcomm Linux Image),
-capturing from a **MIPI CSI** camera instead of USB, and launched automatically on boot via a
-systemd service so the board behaves like a finished appliance. *Full walkthrough to follow.*
+The production-shaped stage: the **same container image from Stage 2**, now running on **Qualcomm
+Linux (QLI 2.1)** — the **Yocto-based distribution a commercial Dragonwing product actually ships**.
+Nothing about the application changes; the image is byte-for-byte the one Stage 2 builds
+(`container/Dockerfile`, `ubuntu:24.04` base, portable). What changes is the **host underneath it**,
+because QLI is not Ubuntu — and that delta is exactly the point of the stage: it's where you stop
+*using* someone else's OS and start *managing your own distribution*.
+
+The QLI host differs from Ubuntu in ways that all have to be handled for the NPU and display to work:
+**Weston** instead of GNOME (UID-match display auth, no X cookie), **flat `/usr/lib`** instead of
+multiarch, a **QAIRT firmware version** the container's QNN runtime must match, a **FastRPC DSP shell**
+that must be reachable at a hardcoded path, device-node **gid** handling, and a USB camera that
+**enumerates high** behind the on-SoC ISP/codec nodes. A QLI-specific CDI
+(`container/qli/cdi-hw-acc-8275-qli.json`) and run wrapper
+(`container/qli/run_doorbell_container_qli.sh`) encapsulate every one of these.
+
+- **One-page quickstart for the reference config:** [INSTALL.md](INSTALL.md) (IQ-8275 EVK + QLI 2.1
+  + container NPU).
+- **Full QLI walkthrough** — every Ubuntu→QLI delta, why it exists, and how it's handled:
+  [`container/qli/README.md`](container/qli/README.md).
+
+> **Status:** built and verified end-to-end on an IQ-8275 EVK running QLI 2.1 (HTP v75) — full-screen
+> on the Weston/HDMI display, USB webcam, recognition on the NPU. The next appliance step (boot-time
+> autostart as a managed service, and the OTA/CI story that turns this into a product) is sketched in
+> **[blog.md](blog.md)**.
 
 ---
 
@@ -298,12 +335,14 @@ the demo rather than fighting over the camera. The wrapper runs the CPU path whe
 as `run_doorbell.sh cpu`; duplicate the `.desktop` file with that argument if you want a
 second CPU icon.
 
-### 2.8 — Run in a container (optional)
+### 2.8 — Run in a container (the bridge to Stage 3)
 
-The same demo can run as a Docker container on the board — full-screen on HDMI, USB webcam,
-NPU inference — using the official Dragonwing **Container Device Interface (CDI)** to reach the
-HTP v75. The image stays driver-free: `qai-appbuilder` bundles its own QNN runtime, so the CDI
-only forwards the kernel-coupled FastRPC/DMA plumbing from the host.
+Bare metal is the fastest way to iterate, but it isn't what you ship. The same demo runs as a Docker
+container on the board — full-screen on HDMI, USB webcam, NPU inference — using the official
+Dragonwing **Container Device Interface (CDI)** to reach the HTP v75. This is the artifact that
+carries **unchanged** onto Qualcomm Linux in [Stage 3](#stage-3--iq-8275--qli-21-managing-your-distribution):
+the image stays driver-free (`qai-appbuilder` bundles its own QNN runtime, so the CDI only forwards
+the kernel-coupled FastRPC/DMA plumbing from the host).
 
 ```bash
 # one-time: install Docker, then the CDI
@@ -380,10 +419,14 @@ per-core load live when you toggle with **B**.
 doorbell.py            The application (single file — scp to the board and run)
 run_doorbell.sh        Board launcher — sets display env, keeps screen awake, single-instance
 dragonwing-doorbell-npu.desktop  GNOME desktop icon that one-click-launches the NPU backend
-container/             Dockerized Stage 2 — Dockerfile, requirements, CDI for HTP v75, run wrapper
+container/             Stage 2 (Ubuntu) container — Dockerfile, requirements, CDI for HTP v75, run wrapper
+  qli/                 Stage 3 (QLI 2.1) — same image, Yocto-host CDI + wrapper + walkthrough
 qnn_context/           Pre-built HTP v75 NPU context binaries (*.bin, committed) + how they're made
 aihub_compile.py       Host: ONNX -> AI Hub W8A16 quantize + HTP v75 compile -> DLC
 benchmark.py           CPU vs NPU latency benchmark
+INSTALL.md             One-page install — IQ-8275 + QLI 2.1 reference config (Stage 3)
+INSTALL-ubuntu.md      One-page install — IQ-8275 + Canonical Ubuntu 24.04 (Stage 2)
+blog.md                Why this prototype→production journey, and what's next to go commercial
 tools/
   npu_fps_test.py      Headless NPU FPS harness
   profile_engines.py   Per-step engine profiler
