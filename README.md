@@ -9,6 +9,7 @@ with a QR-triggered self-enrollment flow and a live on-screen telemetry overlay.
 
 **→ [INSTALL.md](INSTALL.md): one-page install for the reference config** (IQ-8275 EVK + QLI 2.1 + container NPU)
 <br>**→ [INSTALL-ubuntu.md](INSTALL-ubuntu.md): one-page install for Canonical Ubuntu 24.04** (IQ-8275 EVK + container NPU)
+<br>**→ [DEMO.md](DEMO.md): how to present the three-board demo** (VENTUNO + IQ-8275/Ubuntu + IQ-8275/QLI, side by side) — plus the full AI pipeline (model, quantization, deployment)
 
 </div>
 
@@ -426,6 +427,7 @@ aihub_compile.py       Host: ONNX -> AI Hub W8A16 quantize + HTP v75 compile -> 
 benchmark.py           CPU vs NPU latency benchmark
 INSTALL.md             One-page install — IQ-8275 + QLI 2.1 reference config (Stage 3)
 INSTALL-ubuntu.md      One-page install — IQ-8275 + Canonical Ubuntu 24.04 (Stage 2)
+DEMO.md                How to present the three-board demo + the full AI pipeline explained
 blog.md                Why this prototype→production journey, and what's next to go commercial
 tools/
   npu_fps_test.py      Headless NPU FPS harness
