@@ -15,6 +15,10 @@ with a QR-triggered self-enrollment flow and a live on-screen telemetry overlay.
 
 ---
 
+<div align="center">
+<img src="assets/From%20Prototype%20to%20Product_Vision%20AI%20Demo_1.png" alt="From Prototype to Product — three-board demo overview" width="880">
+</div>
+
 ## What it does
 
 Point a USB webcam at your door. The app sits in **Standby** until someone appears, then
@@ -53,6 +57,12 @@ the same recognition pipeline, same models, offloaded to the NPU.
 | Unknown | Per-face red box, `unknown` label, "ACCESS DENIED" banner |
 | QR authorized | Violet burst + green confirm, then the live feed with the enrollment "O" ring + get-ready countdown |
 | Registration | Live feed inside the "O" ring, violet pulse (green when one face is ready), capture progress bar |
+
+<div align="center">
+<img src="assets/idle.jpeg" alt="Detection — unknown face, ACCESS DENIED" width="400">
+<img src="assets/qrcode.jpeg" alt="QR authorization — LinkedIn QR held to camera" width="400">
+<img src="assets/face_registered.jpeg" alt="Recognition — UNLOCKED, name + score" width="400">
+</div>
 
 ---
 

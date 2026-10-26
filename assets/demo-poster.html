@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>Dragonwing Doorbell — Demo Poster</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --indigo-deep:   #08002e;
+    --indigo-mid:    #0e0050;
+    --violet:        #5b17d8;
+    --violet-bright: #7c3aed;
+    --violet-glow:   #c084fc;
+    --white:         #ffffff;
+    --white-70:      rgba(255,255,255,0.82);
+    --white-40:      rgba(255,255,255,0.55);
+    --white-15:      rgba(255,255,255,0.15);
+    --white-08:      rgba(255,255,255,0.08);
+    --green:         #22c55e;
+    --red:           #ef4444;
+    --amber:         #f59e0b;
+    --font: 'Inter', system-ui, sans-serif;
+  }
+
+  html, body {
+    width: 1920px; height: 1080px;
+    overflow: hidden;
+    background: var(--indigo-deep);
+    font-family: var(--font);
+    color: var(--white);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Background layers ─────────────────────────────────────────────── */
+  .bg {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 900px 700px at 85% 50%, rgba(91,23,216,0.28) 0%, transparent 70%),
+      radial-gradient(ellipse 600px 500px at 15% 80%, rgba(91,23,216,0.18) 0%, transparent 65%),
+      linear-gradient(155deg, #0e0050 0%, #08002e 55%, #06001f 100%);
+  }
+
+  /* subtle grid lines */
+  .grid-lines {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(91,23,216,0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(91,23,216,0.07) 1px, transparent 1px);
+    background-size: 80px 80px;
+  }
+
+  /* dragon mark — large, anchored right */
+  .dragon-mark {
+    position: absolute;
+    right: -120px; top: 50%;
+    transform: translateY(-50%);
+    width: 820px; height: 820px;
+    opacity: 0.13;
+  }
+  .dragon-mark img { width: 100%; height: 100%; object-fit: contain; }
+
+  /* ── Layout shell ──────────────────────────────────────────────────── */
+  .frame {
+    position: relative;
+    width: 1920px; height: 1080px;
+    display: grid;
+    grid-template-columns: 520px 1fr 480px;
+    grid-template-rows: 1fr;
+    gap: 0;
+    padding: 0;
+  }
+
+  /* ── LEFT PANEL — The journey ──────────────────────────────────────── */
+  .panel-left {
+    position: relative;
+    padding: 64px 48px 56px 72px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-right: 1px solid rgba(91,23,216,0.35);
+    background: rgba(0,0,0,0.15);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 0;
+  }
+  .brand-dragon {
+    width: 42px; height: 42px;
+    opacity: 0.95;
+    flex-shrink: 0;
+  }
+  .brand-text {
+    line-height: 1.1;
+  }
+  .brand-text .qualifier {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--violet-glow);
+    display: block;
+    margin-bottom: 2px;
+  }
+  .brand-text .name {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: -0.01em;
+  }
+
+  .headline-block {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 28px 0 20px;
+  }
+
+  .headline-block h1 {
+    font-size: 46px;
+    font-weight: 900;
+    line-height: 1.0;
+    letter-spacing: -0.035em;
+    color: var(--white);
+    margin-bottom: 18px;
+  }
+  .headline-block h1 em {
+    font-style: normal;
+    color: var(--violet-glow);
+  }
+
+  .headline-block .sub {
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.65;
+    color: var(--white-70);
+    max-width: 340px;
+  }
+
+  /* Stage ladder */
+  .stages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 13px 16px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    transition: background 0.2s;
+  }
+  .stage.s1 { background: rgba(91,23,216,0.18); border-color: rgba(91,23,216,0.30); }
+  .stage.s2 { background: rgba(91,23,216,0.28); border-color: rgba(91,23,216,0.45); }
+  .stage.s3 { background: rgba(91,23,216,0.42); border-color: rgba(124,58,237,0.65); }
+
+  .stage-num {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0;
+    flex-shrink: 0;
+  }
+  .s1 .stage-num { background: rgba(91,23,216,0.5); color: #ffffff; }
+  .s2 .stage-num { background: rgba(91,23,216,0.7); color: white; }
+  .s3 .stage-num { background: var(--violet); color: white; }
+
+  .stage-info { flex: 1; min-width: 0; }
+  .stage-title {
+    font-size: 12px; font-weight: 700;
+    color: var(--white);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .stage-desc {
+    font-size: 12px; font-weight: 400;
+    color: var(--white-70);
+    margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .stage-arrow {
+    font-size: 11px; color: var(--violet-glow); opacity: 0.7;
+  }
+
+  .arrow-down {
+    align-self: flex-start;
+    padding-left: 12px;
+    margin: 2px 0;
+    color: var(--violet-glow);
+    font-size: 16px;
+    opacity: 0.6;
+  }
+
+  /* ── CENTRE PANEL — Demo explanation ───────────────────────────────── */
+  .panel-centre {
+    position: relative;
+    padding: 56px 56px 48px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .centre-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 36px;
+  }
+
+  .centre-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--violet-glow);
+    margin-bottom: 8px;
+  }
+  .centre-heading {
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    color: var(--white);
+  }
+
+  /* Metric pills */
+  .metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: right;
+  }
+  .metric-pill {
+    background: rgba(91,23,216,0.25);
+    border: 1px solid rgba(124,58,237,0.4);
+    border-radius: 8px;
+    padding: 8px 14px;
+    min-width: 148px;
+  }
+  .metric-val {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--violet-glow);
+    line-height: 1;
+  }
+  .metric-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--white-70);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  /* Face state cards */
+  .states-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 30px;
+  }
+
+  .state-card {
+    background: var(--white-08);
+    border: 1px solid var(--white-15);
+    border-radius: 12px;
+    padding: 16px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .state-icon {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .icon-green  { background: rgba(34,197,94,0.18);  color: var(--green); border: 1.5px solid rgba(34,197,94,0.4); }
+  .icon-red    { background: rgba(239,68,68,0.18);   color: var(--red);   border: 1.5px solid rgba(239,68,68,0.4); }
+  .icon-amber  { background: rgba(245,158,11,0.18);  color: var(--amber); border: 1.5px solid rgba(245,158,11,0.4); }
+  .icon-violet { background: rgba(91,23,216,0.30);   color: var(--violet-glow); border: 1.5px solid rgba(124,58,237,0.5); }
+
+  .state-card .state-label {
+    font-size: 13px; font-weight: 700; color: var(--white); line-height: 1.1;
+  }
+  .state-card .state-desc {
+    font-size: 12px; font-weight: 400; color: var(--white-70); line-height: 1.5;
+  }
+
+  /* AI pipeline strip */
+  .pipeline {
+    background: var(--white-08);
+    border: 1px solid var(--white-15);
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+  }
+  .pipeline-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--violet-glow);
+    margin-bottom: 12px;
+  }
+  .pipeline-steps {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+  .pipe-step {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+    text-align: center;
+  }
+  .pipe-step-dot {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: rgba(91,23,216,0.35);
+    border: 1.5px solid rgba(124,58,237,0.5);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .pipe-step-label {
+    font-size: 11px; font-weight: 700;
+    color: var(--white);
+    white-space: nowrap;
+  }
+  .pipe-step-sub {
+    font-size: 11px; font-weight: 400;
+    color: var(--white-70);
+    white-space: nowrap;
+  }
+  .pipe-arrow {
+    color: var(--violet-glow);
+    font-size: 16px;
+    opacity: 0.6;
+    flex-shrink: 0;
+    padding: 0 4px;
+    margin-bottom: 22px;
+  }
+
+  /* Key/legend row */
+  .key-row {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+  .key-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--white-70);
+  }
+  .key-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .kd-green  { background: var(--green); }
+  .kd-red    { background: var(--red); }
+  .kd-violet { background: var(--violet-glow); }
+
+  .key-chip {
+    background: var(--white-15);
+    border: 1px solid var(--white-15);
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--white-70);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .key-sep {
+    width: 1px; height: 18px;
+    background: var(--white-15);
+    flex-shrink: 0;
+  }
+
+  /* ── RIGHT PANEL — How to try it ─────────────────────────────────── */
+  .panel-right {
+    position: relative;
+    padding: 56px 56px 48px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-left: 1px solid rgba(91,23,216,0.35);
+    background: rgba(0,0,0,0.12);
+  }
+
+  .try-heading {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--violet-glow);
+    margin-bottom: 22px;
+  }
+
+  .step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 32px;
+  }
+
+  .step-item {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .step-n {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: rgba(91,23,216,0.4);
+    border: 1.5px solid rgba(124,58,237,0.55);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800;
+    color: var(--white);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-body { flex: 1; }
+  .step-title {
+    font-size: 13.5px; font-weight: 700; color: var(--white);
+    line-height: 1.2; margin-bottom: 3px;
+  }
+  .step-desc {
+    font-size: 11px; font-weight: 400; color: var(--white-70);
+    line-height: 1.55;
+  }
+  .step-desc em {
+    font-style: normal;
+    color: var(--violet-glow);
+    font-weight: 600;
+  }
+
+  /* QR block */
+  .qr-block {
+    background: var(--white-08);
+    border: 1px solid rgba(124,58,237,0.35);
+    border-radius: 16px;
+    padding: 20px 20px 16px;
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .qr-img {
+    width: 120px; height: 120px;
+    border-radius: 10px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: white;
+    padding: 6px;
+  }
+  .qr-img img { width: 100%; height: 100%; object-fit: contain; }
+
+  .qr-text { flex: 1; }
+  .qr-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(10,102,194,0.25);
+    border: 1px solid rgba(10,102,194,0.5);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #60a5fa;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .qr-title {
+    font-size: 14px; font-weight: 700; color: var(--white);
+    line-height: 1.2; margin-bottom: 5px;
+  }
+  .qr-desc {
+    font-size: 12px; font-weight: 400; color: var(--white-70);
+    line-height: 1.55;
+  }
+
+  /* controls strip */
+  .controls-strip {
+    background: var(--white-08);
+    border: 1px solid var(--white-15);
+    border-radius: 10px;
+    padding: 12px 16px;
+  }
+  .controls-label {
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--white-40);
+    margin-bottom: 8px;
+  }
+  .controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ctrl {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--white-70);
+  }
+  .ctrl kbd {
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.20);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-family: 'SF Mono','Fira Code',monospace;
+    color: var(--white);
+    font-weight: 700;
+  }
+
+  /* ── Bottom status bar ─────────────────────────────────────────────── */
+  .status-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 46px;
+    background: rgba(0,0,0,0.35);
+    border-top: 1px solid rgba(91,23,216,0.30);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 72px 0 72px;
+    gap: 24px;
+  }
+  .status-logo {
+    height: 20px;
+    opacity: 0.85;
+  }
+  .status-tag {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--white-40);
+  }
+  .status-dots {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .sdot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+  .sdot.on  { background: var(--green); }
+  .sdot.off { background: rgba(255,255,255,0.20); }
+  .status-live {
+    font-size: 11px; font-weight: 600;
+    color: var(--green);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+</style>
+</head>
+<body>
+
+<div class="bg"></div>
+<div class="grid-lines"></div>
+
+<!-- dragon mark background -->
+<div class="dragon-mark">
+  <img src="3.png" alt="">
+</div>
+
+<div class="frame">
+
+  <!-- ══════════════════════ LEFT ══════════════════════ -->
+  <div class="panel-left">
+
+    <div class="brand">
+      <img class="brand-dragon" src="2.png" alt="Dragonwing mark">
+      <div class="brand-text">
+        <span class="qualifier">Qualcomm</span>
+        <span class="name">Dragonwing Doorbell</span>
+      </div>
+    </div>
+
+    <div class="headline-block">
+      <h1>From<br><em>Prototype</em><br>to<br><em>Product</em></h1>
+      <p class="sub">One application. Three platforms. The same AI model on the NPU at each step — demonstrating the journey from maker to managed distribution.</p>
+    </div>
+
+    <!-- stage ladder -->
+    <div class="stages">
+
+      <div class="stage s1">
+        <div class="stage-num">1</div>
+        <div class="stage-info">
+          <div class="stage-title">VENTUNO Q + App Lab</div>
+          <div class="stage-desc">Maker on-ramp · App Lab UI · onnxruntime-qnn</div>
+        </div>
+        <div class="stage-arrow">›</div>
+      </div>
+
+      <div style="padding-left:12px; color:rgba(124,58,237,0.55); font-size:13px;">↓</div>
+
+      <div class="stage s2">
+        <div class="stage-num">2</div>
+        <div class="stage-info">
+          <div class="stage-title">IQ-8275 + Ubuntu 24.04</div>
+          <div class="stage-desc">Production silicon · Docker CDI · qai-appbuilder</div>
+        </div>
+        <div class="stage-arrow">›</div>
+      </div>
+
+      <div style="padding-left:12px; color:rgba(124,58,237,0.70); font-size:13px;">↓</div>
+
+      <div class="stage s3">
+        <div class="stage-num">3</div>
+        <div class="stage-info">
+          <div class="stage-title">IQ-8275 + QLI 2.1</div>
+          <div class="stage-desc">Qualcomm Linux · same container · own your distro</div>
+        </div>
+        <div class="stage-arrow">›</div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════ CENTRE ══════════════════════ -->
+  <div class="panel-centre">
+
+    <div class="centre-top">
+      <div>
+        <div class="centre-eyebrow">What you're seeing</div>
+        <div class="centre-heading">Real-time face recognition<br>on the NPU — not the CPU</div>
+      </div>
+      <div class="metrics">
+        <div class="metric-pill">
+          <div class="metric-val">~2 ms</div>
+          <div class="metric-label">Detection · NPU</div>
+        </div>
+        <div class="metric-pill">
+          <div class="metric-val">~47 ms</div>
+          <div class="metric-label">Detection · CPU</div>
+        </div>
+        <div class="metric-pill" style="border-color:rgba(34,197,94,0.4); background:rgba(34,197,94,0.10);">
+          <div class="metric-val" style="color:var(--green);">~20×</div>
+          <div class="metric-label">NPU speedup</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- face state cards -->
+    <div class="states-row">
+
+      <div class="state-card">
+        <div class="state-icon icon-violet">😴</div>
+        <div>
+          <div class="state-label">Standby</div>
+          <div class="state-desc">Dragonwing idle screen. Waiting for a face to enter frame.</div>
+        </div>
+      </div>
+
+      <div class="state-card">
+        <div class="state-icon icon-amber">🔍</div>
+        <div>
+          <div class="state-label">Detecting</div>
+          <div class="state-desc">Face enters frame. Amber brackets appear. Recognition begins.</div>
+        </div>
+      </div>
+
+      <div class="state-card" style="border-color:rgba(34,197,94,0.30); background:rgba(34,197,94,0.07);">
+        <div class="state-icon icon-green">✓</div>
+        <div>
+          <div class="state-label">Unlocked</div>
+          <div class="state-desc">Known face. Green box + name + score. UNLOCKED banner.</div>
+        </div>
+      </div>
+
+      <div class="state-card" style="border-color:rgba(239,68,68,0.28); background:rgba(239,68,68,0.06);">
+        <div class="state-icon icon-red">✕</div>
+        <div>
+          <div class="state-label">Access Denied</div>
+          <div class="state-desc">Unknown face. Red box labelled "unknown". ACCESS DENIED.</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- AI pipeline strip -->
+    <div class="pipeline">
+      <div class="pipeline-title">AI pipeline</div>
+      <div class="pipeline-steps">
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">📦</div>
+          <div class="pipe-step-label">buffalo_sc</div>
+          <div class="pipe-step-sub">InsightFace pretrained</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">🔢</div>
+          <div class="pipe-step-label">W8A16 Quantize</div>
+          <div class="pipe-step-sub">AI Hub · INT8 weights</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">⚡</div>
+          <div class="pipe-step-label">HTP Compile</div>
+          <div class="pipe-step-sub">QCS8275 · v75 .bin</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">🧠</div>
+          <div class="pipe-step-label">det_500m</div>
+          <div class="pipe-step-sub">SCRFD detector · ~2 ms</div>
+        </div>
+        <div class="pipe-arrow">+</div>
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">🔗</div>
+          <div class="pipe-step-label">w600k_mbf</div>
+          <div class="pipe-step-sub">ArcFace · 512-d embed</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">📐</div>
+          <div class="pipe-step-label">Cosine Match</div>
+          <div class="pipe-step-sub">vs enrolled vectors</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+
+        <div class="pipe-step">
+          <div class="pipe-step-dot">🎯</div>
+          <div class="pipe-step-label">Result</div>
+          <div class="pipe-step-sub">name + score · live</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- key row -->
+    <div class="key-row">
+      <div class="key-item"><div class="key-dot kd-green"></div>Known face → UNLOCKED</div>
+      <div class="key-item"><div class="key-dot kd-red"></div>Unknown → ACCESS DENIED</div>
+      <div class="key-item"><div class="key-dot kd-violet"></div>QR scan → self-enroll in 15 s</div>
+      <div class="key-sep"></div>
+      <div class="key-item">Press <span class="key-chip">B</span> to toggle CPU ↔ NPU live</div>
+      <div class="key-item">Press <span class="key-chip">G</span> to enroll a guest</div>
+      <div class="key-item">Press <span class="key-chip">C</span> to clear database</div>
+      <div class="key-sep"></div>
+      <div class="key-item" style="color:var(--white-40); font-size:11px; font-style:italic;">2-min TTL · in-memory only · no data stored to disk</div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════ RIGHT ══════════════════════ -->
+  <div class="panel-right">
+
+    <div class="try-heading">Try it yourself</div>
+
+    <div class="step-list">
+
+      <div class="step-item">
+        <div class="step-n">1</div>
+        <div class="step-body">
+          <div class="step-title">Stand in front of the camera</div>
+          <div class="step-desc">You'll appear with a <em>red box</em> — the system doesn't know you yet. The board detects and processes every face in frame independently.</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-n">2</div>
+        <div class="step-body">
+          <div class="step-title">Open LinkedIn → Share Profile → QR</div>
+          <div class="step-desc">Hold your phone's <em>LinkedIn QR code</em> up to the camera. The app reads it and starts a <em>10-second authorization</em> — a violet burst will appear on-screen.</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-n">3</div>
+        <div class="step-body">
+          <div class="step-title">Hold still inside the ring</div>
+          <div class="step-desc">An <em>"O" enrollment ring</em> appears. Place your face inside it and slowly turn your head. The app captures ~30 frames over ~15 seconds for a diverse set of angles.</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-n">4</div>
+        <div class="step-body">
+          <div class="step-title">Step back — you're recognized</div>
+          <div class="step-desc">Your box turns <em>green</em> with your LinkedIn name and a similarity score. Try moving further away or obscuring your face — watch it recover.</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- QR sample -->
+    <div class="qr-block">
+      <div class="qr-img">
+        <img src="linkedin_qr.jpeg" alt="Sample LinkedIn QR">
+      </div>
+      <div class="qr-text">
+        <div class="qr-badge">
+          <svg width="9" height="9" viewBox="0 0 20 20" fill="currentColor"><path d="M16.338 16.338H13.67V12.16c0-.995-.017-2.277-1.387-2.277-1.389 0-1.601 1.086-1.601 2.207v4.248H8.014v-8.59h2.559v1.174h.037c.356-.675 1.227-1.387 2.526-1.387 2.703 0 3.203 1.778 3.203 4.092v4.711zM5.005 6.575a1.548 1.548 0 1 1 0-3.096 1.548 1.548 0 0 1 0 3.096zm-1.337 9.763H6.34v-8.59H3.667v8.59zM17.668 1H2.328C1.595 1 1 1.581 1 2.298v15.403C1 18.418 1.595 19 2.328 19h15.34c.734 0 1.332-.582 1.332-1.299V2.298C19 1.581 18.402 1 17.668 1z"/></svg>
+          LinkedIn QR
+        </div>
+        <div class="qr-title">Open LinkedIn → tap your photo → Share Profile → QR Code</div>
+        <div class="qr-desc">Any LinkedIn profile QR authorizes enrollment. The app reads it in frame — no NFC, no app to install. TTL: 2 minutes.</div>
+      </div>
+    </div>
+
+    <!-- controls strip -->
+    <div class="controls-strip">
+      <div class="controls-label">Keyboard controls (click window first)</div>
+      <div class="controls-row">
+        <div class="ctrl"><kbd>B</kbd> CPU ↔ NPU</div>
+        <div class="ctrl"><kbd>G</kbd> Guest enroll</div>
+        <div class="ctrl"><kbd>C</kbd> Clear DB</div>
+        <div class="ctrl"><kbd>[</kbd><kbd>]</kbd> Idle timeout</div>
+        <div class="ctrl"><kbd>-</kbd><kbd>=</kbd> TTL</div>
+        <div class="ctrl"><kbd>Esc</kbd> Standby</div>
+        <div class="ctrl"><kbd>Q</kbd> Quit</div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- status bar -->
+<div class="status-bar">
+  <img class="status-logo" src="Qualcomm-Dragonwing-logo.jpeg" alt="Qualcomm Dragonwing">
+  <span class="status-tag">InsightFace buffalo_sc · W8A16 · HTP v75 · qai-appbuilder · in-process inference</span>
+  <div style="display:flex; align-items:center; gap:10px;">
+    <div class="status-dots">
+      <div class="sdot on"></div>
+      <div class="sdot on"></div>
+      <div class="sdot on"></div>
+    </div>
+    <span class="status-live">3 boards live</span>
+  </div>
+</div>
+
+</body>
+</html>

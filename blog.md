@@ -3,6 +3,10 @@
 *Why you'd walk an edge-AI app from an Arduino board to Qualcomm Linux one deliberate
 step at a time — and what the last mile to a real commercial product actually looks like.*
 
+<div align="center">
+<img src="assets/From%20Prototype%20to%20Product_Vision%20AI%20Demo_1.png" alt="From Prototype to Product — one application, three platforms, same AI model on the NPU" width="880">
+</div>
+
 ---
 
 ## The demo in one sentence
@@ -48,6 +52,11 @@ by a companion NPU runner container, and the recognition it serves is the *exact
 `buffalo_sc` pipeline as production — but it lives inside App Lab's world, streamed into a webview.
 Stage 1 answers one question — *does the idea work, and does it feel right?* — and answers it cheaply.
 
+<div align="center">
+<img src="assets/authorized.jpeg" alt="Stage 1 — AUTHORIZED screen on the Ventuno Q App Lab webview" width="320">
+<br><sub>The App Lab webview after a successful enrollment on the VENTUNO Q.</sub>
+</div>
+
 *(Stage 1 lives in its own repository,
 [munoz0raul/dorbell-app-bricks](https://github.com/munoz0raul/dorbell-app-bricks), because it
 follows Arduino's app-bricks-examples convention and drops straight into an App Lab apps directory.)*
@@ -78,6 +87,12 @@ Two things get solved properly at this stage:
   skel, so the CDI only forwards the **kernel-coupled plumbing** that *can't* be pip-installed: the
   FastRPC device node, the DMA (Direct Memory Access) heaps, and the host's FastRPC userspace stubs.
   That container is the artifact that carries, unchanged, into Stage 3.
+
+<div align="center">
+<img src="assets/qrcode.jpeg" alt="Stage 2 — LinkedIn QR held to the camera, ACCESS DENIED before enrollment" width="420">
+<img src="assets/face_registered.jpeg" alt="Stage 2 — UNLOCKED, raulrosettomunoz 0.89, running on the IQ-8275 NPU" width="420">
+<br><sub>Left: LinkedIn QR authorization on the IQ-8275 (Ubuntu). Right: recognized with NPU at 8.3 FPS.</sub>
+</div>
 
 ### Stage 3 — IQ-8275 + QLI 2.1: managing your distribution
 

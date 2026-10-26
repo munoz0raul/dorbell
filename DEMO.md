@@ -3,6 +3,10 @@
 *A script and a technical reference for presenting the three-board demo side by side:
 **VENTUNO Q + Ubuntu**, **IQ-8275 + Ubuntu**, and **IQ-8275 + QLI 2.1**.*
 
+<div align="center">
+<img src="assets/From%20Prototype%20to%20Product_Vision%20AI%20Demo_2.png" alt="Dragonwing Doorbell — three boards, real-time face recognition on the NPU" width="880">
+</div>
+
 This document answers three questions a viewer will ask, in order:
 
 1. **What am I looking at?** (the high-level story — [§1](#1-the-high-level-story))
@@ -80,6 +84,10 @@ core of the demo: *the application is constant; the platform integration is the 
 | **NPU runtime delivery** | wheel bundles QNN 2.51 + v75 skels | wheel bundles QNN; pinned to firmware | wheel pinned to the QLI DSP firmware's QAIRT |
 | **How the NPU is reached** | inside the brick's runner container | host libs + CDI (Container Device Interface) on Ubuntu paths | CDI on **flat `/usr/lib`** paths, device nodes passed to preserve host gids |
 | **Camera** | USB webcam (App Lab bind-mounts host `/dev`) | USB webcam at `/dev/video0` | USB webcam enumerates **high** (e.g. `/dev/video28`) behind on-SoC ISP nodes |
+
+<div align="center">
+<img src="assets/From%20Prototype%20to%20Product_TV%20back%20demo.png" alt="Platform comparison — app, AI runtime, packaging, OS, and silicon across all three stages" width="880">
+</div>
 
 ### Why the two inference ends differ (and why that's honest, not inconsistent)
 
@@ -171,6 +179,14 @@ frame ──► det_500m ──► boxes + 5 landmarks per face
          │                                │
        GREEN  name + score              RED  "unknown"
 ```
+
+*Enrollment in action — from "place your face in the ring" through the capture progress bar to UNLOCKED:*
+
+<div align="center">
+<img src="assets/face_record.jpeg" alt="Enrollment start — place your face in the ring, frame 2/30" width="280">
+<img src="assets/face_record_1.jpeg" alt="Enrollment mid — slowly turn your head, frame 5/30" width="280">
+<img src="assets/face_record_7.jpeg" alt="Enrollment near-complete — frame 27/30" width="280">
+</div>
 
 Two details that matter for quality:
 
