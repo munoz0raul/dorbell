@@ -85,6 +85,27 @@ class FpsCounter:
 ONNX_DIR = os.path.expanduser("~/.insightface/models/buffalo_sc")
 CTX_DIR  = os.path.expanduser("~/qnn_context")
 
+
+def _detect_soc() -> str:
+    """Return a SoC tag matched against ~/qnn_context/<model>_<tag>.bin filenames.
+
+    Reads /sys/firmware/devicetree/base/model (populated on all Qualcomm Linux
+    boards) and maps the device-tree model string to the tag baked into the
+    AI Hub context binary filenames. Falls back to 'qcs8275' so existing
+    single-SoC setups are unaffected.
+    """
+    try:
+        with open("/sys/firmware/devicetree/base/model", "r") as f:
+            model_str = f.read().rstrip("\x00").lower()
+    except OSError:
+        return "qcs8275"
+    if "9075" in model_str or "sa8775" in model_str:
+        return "qcs9075"
+    return "qcs8275"
+
+
+_SOC_TAG = _detect_soc()
+
 _DET_STRIDES    = [8, 16, 32]
 _DET_FEAT_MAPS  = [40, 20, 10]   # 320/8, 320/16, 320/32
 _DET_NUM_ANCHORS = 2
@@ -185,8 +206,8 @@ def _align_crop(frame: np.ndarray, kps: np.ndarray) -> np.ndarray:
 
 
 
-DET_CTX_PATH = os.path.join(CTX_DIR, "det_500m_qcs8275.bin")
-REC_CTX_PATH = os.path.join(CTX_DIR, "w600k_mbf_qcs8275.bin")
+DET_CTX_PATH = os.path.join(CTX_DIR, f"det_500m_{_SOC_TAG}.bin")
+REC_CTX_PATH = os.path.join(CTX_DIR, f"w600k_mbf_{_SOC_TAG}.bin")
 
 # QNN (Qualcomm Neural Network) runtime libraries. qai_appbuilder bundles a
 # matching set under its package libs/ and resolves them automatically, so we
