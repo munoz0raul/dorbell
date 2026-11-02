@@ -34,7 +34,8 @@
 #      fastrpc=991), which `--group-add` then unlocks. So the CDI carries only the
 #      lib mounts; the nodes live here.
 #   B. The board DSP runtime dir (holding fastrpc_shell_unsigned_3 + the matching
-#      v75 QNN skel) is bind-mounted onto **/usr/lib/dsp/cdsp**. The FastRPC lib
+#      HTP QNN skel, e.g. libQnnHtpV75Skel.so on IQ-8275 or V73 on IQ-9075) is
+#      bind-mounted onto **/usr/lib/dsp/cdsp**. The FastRPC lib
 #      normally derives the board-specific path from /sys/firmware/devicetree/
 #      base/model, which is absent in the container; it then only probes a few
 #      HARDCODED dirs (/usr/lib/dsp/cdsp among them) -- DSP_LIBRARY_PATH is not
@@ -48,7 +49,8 @@
 #   - CDI installed:  python3 ../cdi/install_cdi.py --file cdi-hw-acc-8275-qli.json
 #   - Image built:    docker build -t dragonwing-doorbell -f ../Dockerfile <repo-root>
 #   - Models present on the host (any readable location; default /root):
-#       $MODELS_HOME/qnn_context/{det_500m,w600k_mbf}_qcs8275.bin   (NPU HTP)
+#       $MODELS_HOME/qnn_context/{det_500m,w600k_mbf}_qcs8275.bin   (NPU HTP IQ-8275)
+#       $MODELS_HOME/qnn_context/{det_500m,w600k_mbf}_qcs9075.bin   (NPU HTP IQ-9075)
 #       $MODELS_HOME/.insightface/models/buffalo_sc/*.onnx          (CPU; auto-
 #         downloaded on first `B`->CPU toggle if absent -- the wrapper creates a
 #         writable ~/.insightface for the uid-1000 container to download into)
@@ -104,7 +106,7 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # NPU note A at the top): dmaheap for the ION heap, fastrpc for the DSP node.
 GROUP_ARGS=()
 for grp in fastrpc dmaheap video; do
-    gid=$(getent group "$grp" | cut -d: -f3)
+    gid=$(grep "^$grp:" /etc/group | cut -d: -f3)   # getent absent on QLI
     [ -n "${gid:-}" ] && GROUP_ARGS+=(--group-add "$gid")
 done
 
@@ -118,19 +120,32 @@ done
 
 # --- Board DSP runtime dir -> mounted at the hardcoded /usr/lib/dsp/cdsp -------
 # (NPU note B.) Auto-detect any .../dsp/cdsp dir that holds BOTH a fastrpc shell
-# and the v75 QNN skel; mount it where the in-container FastRPC lib will look.
+# and a QNN HTP skel (any version). Mount it where the in-container FastRPC lib
+# will look. Also derive DOORBELL_SOC_TAG from the skel version number so
+# doorbell.py picks the matching context binary (qcs8275↔V75, qcs9075↔V73).
+# NOTE: [ -e glob ] does NOT expand globs in bash -- use ls|grep instead.
 DSP_MOUNT_ARGS=()
 DSP_CDSP_DIR=""
+DOORBELL_SOC_TAG=""
 for d in $(find /usr/share/qcom -type d -path '*/dsp/cdsp' 2>/dev/null); do
-    if [ -e "$d/fastrpc_shell_unsigned_3" ] && [ -e "$d/libQnnHtpV75Skel.so" ]; then
-        DSP_CDSP_DIR="$d"; break
+    if [ -e "$d/fastrpc_shell_unsigned_3" ] && \
+       ls "$d"/libQnnHtpV*Skel.so 2>/dev/null | grep -q .; then
+        DSP_CDSP_DIR="$d"
+        # Map HTP version → SoC tag used in context binary filenames
+        htp_skel=$(ls "$d"/libQnnHtpV*Skel.so 2>/dev/null | head -1)
+        htp_ver=$(basename "$htp_skel" | sed 's/libQnnHtpV\([0-9]*\)Skel\.so/\1/')
+        case "$htp_ver" in
+            73) DOORBELL_SOC_TAG=qcs9075 ;;
+            75) DOORBELL_SOC_TAG=qcs8275 ;;
+        esac
+        break
     fi
 done
 if [ -n "$DSP_CDSP_DIR" ]; then
     DSP_MOUNT_ARGS+=(-v "$DSP_CDSP_DIR":/usr/lib/dsp/cdsp:ro)
 else
     echo "WARNING: no board DSP cdsp dir found under /usr/share/qcom (fastrpc_shell" >&2
-    echo "         + libQnnHtpV75Skel.so). NPU/HTP will fall back to CPU." >&2
+    echo "         + libQnnHtpV*Skel.so). NPU/HTP will fall back to CPU." >&2
 fi
 
 # --- USB camera device nodes --------------------------------------------------
@@ -159,6 +174,7 @@ fi
 
 echo "Starting container '$NAME' backend=$BACKEND as uid=$WESTON_UID (QLI/Weston host) ..."
 [ -n "$DSP_CDSP_DIR" ] && echo "  DSP runtime: $DSP_CDSP_DIR -> /usr/lib/dsp/cdsp"
+[ -n "$DOORBELL_SOC_TAG" ] && echo "  SoC tag: $DOORBELL_SOC_TAG (HTP v$htp_ver)"
 
 # --- Model mounts: NPU .bin (repo-committed or user-staged) + CPU ONNX ---------
 # The CPU buffalo_sc ONNX models are NOT committed (only the NPU .bin are), so on
@@ -188,6 +204,7 @@ exec docker run --rm --name "$NAME" \
     -e DISPLAY=:0 \
     -e PYTHONUNBUFFERED=1 \
     -e HOME=/models \
+    ${DOORBELL_SOC_TAG:+-e DOORBELL_SOC_TAG="$DOORBELL_SOC_TAG"} \
     -e XDG_CONFIG_HOME=/tmp \
     -e XDG_CACHE_HOME=/tmp \
     -e XDG_RUNTIME_DIR=/run/user/"${WESTON_UID}" \
