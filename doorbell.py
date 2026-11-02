@@ -99,7 +99,7 @@ def _detect_soc() -> str:
             model_str = f.read().rstrip("\x00").lower()
     except OSError:
         return "qcs8275"
-    if "9075" in model_str or "sa8775" in model_str:
+    if "9075" in model_str or "sa8775" in model_str or "lemans" in model_str:
         return "qcs9075"
     return "qcs8275"
 
