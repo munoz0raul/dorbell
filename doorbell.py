@@ -89,11 +89,18 @@ CTX_DIR  = os.path.expanduser("~/qnn_context")
 def _detect_soc() -> str:
     """Return a SoC tag matched against ~/qnn_context/<model>_<tag>.bin filenames.
 
-    Reads /sys/firmware/devicetree/base/model (populated on all Qualcomm Linux
-    boards) and maps the device-tree model string to the tag baked into the
-    AI Hub context binary filenames. Falls back to 'qcs8275' so existing
-    single-SoC setups are unaffected.
+    Resolution order:
+      1. $DOORBELL_SOC_TAG — explicit override. The container run script sets this
+         (it has full host access and already knows the HTP version from the skel
+         filename), because the device tree is NOT visible inside the Ubuntu
+         container: there is no /sys/firmware/devicetree/ to bind-mount onto.
+      2. /sys/firmware/devicetree/base/model — the device-tree model string on a
+         bare-metal Qualcomm Linux board (no container).
+    Falls back to 'qcs8275' so existing single-SoC setups are unaffected.
     """
+    tag = os.environ.get("DOORBELL_SOC_TAG")
+    if tag:
+        return tag.strip().lower()
     try:
         with open("/sys/firmware/devicetree/base/model", "r") as f:
             model_str = f.read().rstrip("\x00").lower()
@@ -105,6 +112,9 @@ def _detect_soc() -> str:
 
 
 _SOC_TAG = _detect_soc()
+# Human-readable HTP ISA label for the loading screen, derived from the SoC tag
+# so the demo self-labels correctly on either board (v75 on IQ-8275, v73 on IQ-9075).
+_HTP_LABEL = {"qcs8275": "HTP v75", "qcs9075": "HTP v73"}.get(_SOC_TAG, "HTP")
 
 _DET_STRIDES    = [8, 16, 32]
 _DET_FEAT_MAPS  = [40, 20, 10]   # 320/8, 320/16, 320/32
@@ -1481,7 +1491,7 @@ def draw_loading(canvas: np.ndarray, t: float):
     legibility_halo(canvas, cx, cy + _s(215), _s(440), _s(170), strength=0.6)
     draw_wordmark(canvas, cx, cy + _s(180), 1.1)
     put_centered(canvas, f"Initializing neural engines{dots}", cy + _s(250), 0.6, glow_c, 1)
-    put_centered(canvas, "InsightFace buffalo_sc    HTP v75", cy + _s(282), 0.46, VIOLET_LO, 1)
+    put_centered(canvas, f"InsightFace buffalo_sc    {_HTP_LABEL}", cy + _s(282), 0.46, VIOLET_LO, 1)
 
 
 def draw_standby(canvas: np.ndarray, t: float, db_count: int):
