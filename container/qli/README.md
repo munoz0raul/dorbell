@@ -7,6 +7,12 @@ differs, because QLI is not Ubuntu. Everything here was built and verified
 end-to-end on an **IQ-8275 EVK running QLI 2.1** (HTP v75), full-screen on the
 Weston/HDMI display with a USB webcam.
 
+**Also runs on the IQ-9075** (QCS9075 / HTP v73) with the *same* script and CDI —
+the wrapper reads the HTP skel in the board's DSP dir, derives the SoC tag from
+its version number, and passes it to the container as `$DOORBELL_SOC_TAG`, so
+`doorbell.py` loads the matching NPU context binaries (`*_qcs9075.bin`). See
+[IQ-9075 deltas](#iq-9075-qcs9075--htp-v73) below for the one thing to verify.
+
 ## What differs from the Ubuntu host, and why
 
 | Area | Ubuntu host | QLI (Yocto) host | How it's handled |
@@ -57,9 +63,12 @@ auto-downloads `buffalo_sc` into `~/.insightface` on first use (or stage them fo
 offline CPU).
 
 ```
-qnn_context/det_500m_qcs8275.bin   qnn_context/w600k_mbf_qcs8275.bin   # NPU — committed in-repo
+qnn_context/det_500m_qcs8275.bin   qnn_context/w600k_mbf_qcs8275.bin   # NPU IQ-8275 (v75) — committed
+qnn_context/det_500m_qcs9075.bin   qnn_context/w600k_mbf_qcs9075.bin   # NPU IQ-9075 (v73) — committed
 $MODELS_HOME/.insightface/models/buffalo_sc/*.onnx                     # CPU — auto-downloaded
 ```
+The wrapper picks the pair matching the detected SoC; both are committed, so a
+fresh clone runs the NPU demo on either board with no staging.
 
 To run **freshly regenerated** binaries instead, stage them at
 `$MODELS_HOME/qnn_context/` and the wrapper prefers that over the repo copy. The
@@ -84,6 +93,51 @@ identical to bare metal (`O` enroll, `B` backend toggle, `[`/`]` timeout,
 
 Env overrides: `WESTON_UID` (default: owner of `/tmp/.X11-unix/X0`),
 `MODELS_HOME` (default: the invoking user's `$HOME`).
+
+## IQ-9075 (QCS9075 / HTP v73)
+
+The IQ-9075 runs the **exact same commands** — the wrapper adapts itself:
+
+```bash
+cd /root/dorbell/container/qli
+python3 ../cdi/install_cdi.py --file cdi-hw-acc-8275-qli.json   # same CDI (see below)
+cd /root/dorbell && docker build -t dragonwing-doorbell -f container/Dockerfile .
+cd container/qli && bash run_doorbell_container_qli.sh npu       # prints "SoC tag: qcs9075 (HTP v73)"
+```
+
+**What's reused unchanged:**
+
+- **The CDI** (`cdi-hw-acc-8275-qli.json`). It forwards only the FastRPC/DMA-heap
+  **libraries** (flat `/usr/lib/…` → multiarch), which are the same on both QLI
+  boards — nothing in it is HTP-version-specific, so there is no `-9075` CDI.
+- **Weston uid auth, device-node passthrough, camera probing, model mounts** — all
+  SoC-agnostic, identical to the IQ-8275 path.
+
+**What the wrapper switches automatically (nothing to type):** while it scans
+`/usr/share/qcom/**/dsp/cdsp` for the board DSP dir to bind-mount, it reads the
+`libQnnHtpV<N>Skel.so` it finds there and maps the version to the SoC tag
+(**V73 → `qcs9075`**, V75 → `qcs8275`). That tag is passed into the container as
+`$DOORBELL_SOC_TAG`, so `doorbell.py` loads
+`qnn_context/det_500m_qcs9075.bin` + `w600k_mbf_qcs9075.bin` (both committed to the
+repo — the v73 equivalents of the v75 pair). The skel is the HTP ground truth, so
+no device-tree string matching is involved.
+
+**The one thing to verify — QAIRT version match.** Exactly as on the IQ-8275, the
+IQ-9075's on-SoC DSP firmware ships a specific QAIRT version, and the image's
+`qai-appbuilder` must match it or the HTP session silently falls back to CPU
+(`openSessionForPriority status=0x72`, `Failed to load skel 1002`). Check the board
+firmware and compare to the pinned wheel:
+
+```bash
+# v73 skel on the IQ-9075 (same dir the wrapper auto-detects and mounts)
+strings $(find /usr/share/qcom -path '*/dsp/cdsp/libQnnHtpV73.so' | head -1) | grep -m1 'v2\.'
+```
+
+If it differs from the `qai-appbuilder` build in [`../requirements.txt`](../requirements.txt),
+rebuild with the matching cp310 wheel via the `QAI_APPBUILDER_WHEEL` build-arg (the
+`qualcomm/qai-appbuilder` GitHub releases carry 2.51.40 / 2.50.0 / 2.48.40 / 2.40.0 —
+see [`../README.md`](../README.md)). A non-trivial `load Nms` (hundreds of ms, not
+~4 ms) and the **absence** of the `0x72` / `err 4000` lines confirm genuine HTP use.
 
 ## Troubleshooting (QLI-specific deltas)
 
